@@ -1,0 +1,13 @@
+{
+  "name": "horse-provider-nghttp2",
+  "description": "HTTP/2-native transport provider for the Horse web framework, built on libnghttp2 with a per-stream Horse context pool. Multiplexed streams, HPACK header compression, native ALPN over TLS.",
+  "version": "0.1.0-dev.1",
+  "homepage": "https://github.com/freitasjca/horse-provider-nghttp2",
+  "license": "MIT",
+  "mainsrc": "src/",
+  "browsingpath": "src/",
+  "projects": [],
+  "dependencies": {
+    "github.com/HashLoad/horse": ">=3.3.0"
+  }
+}
