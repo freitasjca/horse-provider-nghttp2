@@ -51,9 +51,11 @@ HorseNghttp2GrpcTestClient.exe
 Expected tail:
 
 ```
-9 passed, 0 failed  (total 9)
+16 passed, 0 failed  (total 16)
 All tests PASSED.
 ```
+
+Validated 2026-08-08 on Windows Delphi 12: 16/16 green + `grpcurl` returns `{"message":"Hello, World!"}` for the Greet interop check.
 
 Terminal 2 — grpcurl interop (optional but nice to have):
 
