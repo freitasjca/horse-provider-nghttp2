@@ -191,7 +191,12 @@ begin
     Exit;
   end;
 
-  // 4. Deserialize request, invoke handler, serialize response
+  // 4. Deserialize request, invoke handler, serialize response.
+  //    Two dispatch modes per LInfo — see TGrpcMethodInfo in Registry.pas:
+  //      - LInfo.Handler        (M4a): dispatcher creates + frees BOTH req & resp;
+  //                                    handler mutates the pre-created resp.
+  //      - LInfo.InvokeMethod   (M4c): dispatcher creates req; handler creates +
+  //                                    returns resp; dispatcher frees BOTH.
   try
     LReqObj := LInfo.RequestClass.Create;
     try
@@ -206,32 +211,72 @@ begin
         end;
       end;
 
-      LRespObj := LInfo.ResponseClass.Create;
-      try
+      if Assigned(LInfo.InvokeMethod) then
+      begin
+        { M4c interface path — invoke user's method, which returns a NEW
+          response instance the dispatcher owns. }
+        LRespObj := nil;
         try
-          LInfo.Handler(LReqObj, LRespObj);
-        except
-          on E: Exception do
+          try
+            LRespObj := LInfo.InvokeMethod(LReqObj);
+          except
+            on E: Exception do
+            begin
+              SendGrpcStatusOnly(AStream, GRPC_STATUS_INTERNAL,
+                E.ClassName + ': ' + E.Message);
+              Exit;
+            end;
+          end;
+          if LRespObj = nil then
           begin
-            // SEC-31 style: don't leak stack — Message only.
             SendGrpcStatusOnly(AStream, GRPC_STATUS_INTERNAL,
-              E.ClassName + ': ' + E.Message);
+              'service method returned nil response');
             Exit;
           end;
-        end;
 
-        try
-          LRespProto := TProtoSerializer.Serialize(LRespObj);
-        except
-          on E: Exception do
-          begin
-            SendGrpcStatusOnly(AStream, GRPC_STATUS_INTERNAL,
-              'protobuf encode: ' + E.Message);
-            Exit;
+          try
+            LRespProto := TProtoSerializer.Serialize(LRespObj);
+          except
+            on E: Exception do
+            begin
+              SendGrpcStatusOnly(AStream, GRPC_STATUS_INTERNAL,
+                'protobuf encode: ' + E.Message);
+              Exit;
+            end;
           end;
+        finally
+          LRespObj.Free;
         end;
-      finally
-        LRespObj.Free;
+      end
+      else
+      begin
+        { M4a procedural path — dispatcher owns both req + resp. }
+        LRespObj := LInfo.ResponseClass.Create;
+        try
+          try
+            LInfo.Handler(LReqObj, LRespObj);
+          except
+            on E: Exception do
+            begin
+              SendGrpcStatusOnly(AStream, GRPC_STATUS_INTERNAL,
+                E.ClassName + ': ' + E.Message);
+              Exit;
+            end;
+          end;
+
+          try
+            LRespProto := TProtoSerializer.Serialize(LRespObj);
+          except
+            on E: Exception do
+            begin
+              SendGrpcStatusOnly(AStream, GRPC_STATUS_INTERNAL,
+                'protobuf encode: ' + E.Message);
+              Exit;
+            end;
+          end;
+        finally
+          LRespObj.Free;
+        end;
       end;
     finally
       LReqObj.Free;
@@ -239,7 +284,6 @@ begin
   except
     on E: Exception do
     begin
-      // Catch-all for Create failures / OOM / etc.
       SendGrpcStatusOnly(AStream, GRPC_STATUS_INTERNAL,
         'dispatcher fault: ' + E.Message);
       Exit;

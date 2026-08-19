@@ -1,4 +1,4 @@
-﻿program HorseNghttp2TestClient;
+program HorseNghttp2TestClient;
 
 {$APPTYPE CONSOLE}
 
@@ -77,24 +77,18 @@
 {$IFEND}
 
 uses
-  {$IF DEFINED(FPC)}
-  SysUtils,
-  {$ELSE}
-  System.SysUtils,
-  System.Classes,
-  System.SyncObjs,
-  System.Diagnostics,
-  Nghttp2.Client in '..\..\..\Delphi-nghttp2\src\Nghttp2.Client.pas',
-  Nghttp2.Native in '..\..\..\Delphi-nghttp2\src\Nghttp2.Native.pas',
-  Nghttp2.OpenSSL in '..\..\..\Delphi-nghttp2\src\Nghttp2.OpenSSL.pas',
-  Nghttp2.Tls in '..\..\..\Delphi-nghttp2\src\Nghttp2.Tls.pas',
-  Nghttp2.Socket in '..\..\..\Delphi-nghttp2\src\Nghttp2.Socket.pas';
-
+{$IF DEFINED(FPC)}
+  {$IF DEFINED(UNIX)}
+  cthreads,   { MUST be first on FPC/Unix — the concurrency tests below spawn
+                TConcurrentThread instances; without the pthreads driver the
+                binary aborts on the first thread creation. }
+  {$IFEND}
+  SysUtils, Classes, SyncObjs,
+{$ELSE}
+  System.SysUtils, System.Classes, System.SyncObjs, System.Diagnostics,
 {$IFEND}
-
-{
   Nghttp2.Client,
-  Nghttp2.Tls; }  { for TTlsClientContext when target URL is https:// }
+  Nghttp2.Tls;   { for TTlsClientContext when target URL is https:// }
 
 const
   DEFAULT_TARGET_URL = 'http://127.0.0.1:9010';
@@ -604,8 +598,16 @@ begin
     Pos('"pathInfo":"/raw/webrequest"', R.Body) > 0, R.Body);
   Check('GetFieldByName echoed custom header',
     Pos('RawAdapterProbe', R.Body) > 0, R.Body);
+  // Tests what its name says: the key is present and its value is not empty.
+  // It used to require the value to start with "127." or "::", which made it
+  // a loopback check wearing a non-empty check's name — so every cross-machine
+  // run failed here while the server was behaving perfectly, reporting the
+  // real peer address (a Windows client against a Linux server through the
+  // WSL bridge reports e.g. 172.18.64.1). That produced a standing 93/94 that
+  // had to be explained away each time, which is how a suite teaches people
+  // to ignore its failures.
   Check('RemoteAddr non-empty',
-    (Pos('"remoteAddr":"127.', R.Body) > 0) or (Pos('"remoteAddr":"::', R.Body) > 0),
+    (Pos('"remoteAddr":"', R.Body) > 0) and (Pos('"remoteAddr":""', R.Body) = 0),
     R.Body);
 
   // ─── 26 ────────────────────────────────────────────────────────────────

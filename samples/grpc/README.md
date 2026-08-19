@@ -1,19 +1,47 @@
-# gRPC-over-HTTP/2 demo — horse-provider-nghttp2 (M4b)
+# gRPC-over-HTTP/2 demo — horse-provider-nghttp2 (M4b + M5)
 
 End-to-end demo of the gRPC service registry + dispatcher shipped in M4a.
-A Horse server registers two methods, and two clients validate the wire
+A Horse server registers two methods; two clients validate the wire
 format independently: a **Delphi-native test suite** (dogfoods the codec)
-and **grpcurl** (external interop check).
+and **grpcurl** (external interop check). Runs on h2c, h2 over TLS, and
+mTLS (h2 + client cert required).
 
 ## What's here
 
 | File | Purpose |
 |---|---|
-| `HorseNghttp2GrpcDemo.dpr`         | Server — h2c on port 18020 |
-| `HorseNghttp2GrpcTestClient.dpr`   | Delphi-native client using `Nghttp2.Client` + `Nghttp2.Protobuf.Rtti` |
+| `HorseNghttp2GrpcDemo.dpr`         | Server — h2c 18020 / TLS 18443 / mTLS 18443 selected via CLI arg; uses M4c `RegisterService<IGreeter>` |
+| `HorseNghttp2GrpcTestClient.dpr`   | Delphi-native client using `Nghttp2.Client` + `Nghttp2.Protobuf.Rtti` — accepts `http://` or `https://` URLs, plus `--client-cert`/`--client-key` for mTLS |
+| `Sample.Greeter.Interfaces.pas`    | `IGreeter` — `IInvokable` service interface with `[TGrpcService('greeter.Greeter')]` |
 | `Sample.Greeter.Messages.pas`      | `TGreetRequest` / `TGreetResponse` / `TEchoRequest` / `TEchoResponse` |
-| `Sample.Greeter.Service.pas`       | `TGreeterService.Greet` / `.Echo` handler methods |
+| `Sample.Greeter.Service.pas`       | `TGreeterService` (M4a procedural) + `TGreeterServiceImpl` (M4c `IGreeter` impl with ARC disabled) |
 | `greeter.proto`                    | Companion schema for grpcurl (tags must match `[TProtoMember(N)]`) |
+| `gen-tls-cert.sh`                  | Generates `tls/cert.pem`, `tls/key.pem`, `tls/ca.pem`, `tls/client-cert.pem`, `tls/client-key.pem` — run once before TLS/mTLS modes |
+
+## Two registration styles (M4a procedural vs M4c IInvokable)
+
+Both produce identical wire behaviour and are interchangeable.
+
+**M4a — explicit per-method:**
+
+```pascal
+THorseGrpc.RegisterMethod('/greeter.Greeter/Greet',
+  TGreetRequest, TGreetResponse, GreeterService.Greet);
+THorseGrpc.RegisterMethod('/greeter.Greeter/Echo',
+  TEchoRequest, TEchoResponse, GreeterService.Echo);
+```
+
+Handler signature: `procedure(const AReq, AResp: TObject) of object`. Dispatcher creates + frees both.
+
+**M4c — one-line service registration:**
+
+```pascal
+THorseGrpc.RegisterService<IGreeter>(TGreeterServiceImpl.Create);
+```
+
+Requires `IGreeter` to derive from `IInvokable` and carry `[TGrpcService('greeter.Greeter')]`. Requires `TGreeterServiceImpl._AddRef` / `_Release` to return `-1` (see `horse-grpc` SKILL §2 — prevents ARC destroying the instance during RTTI dispatch). Method signature: `function <Name>(const ARequest: T): TResponse` — dispatcher extracts both classes via RTTI.
+
+The demo uses M4c; the M4a call sequence is preserved in a comment.
 
 ## Wire contract
 
@@ -77,6 +105,66 @@ grpcurl -plaintext -proto greeter.proto -d '{}' \
 **grpcurl install** — see the top-level `README.md` of horse-provider-nghttp2
 or `.claude/skills/delphi-grpc/SKILL.md`; the direct-download route is fastest
 on Windows because Chocolatey has no `grpcurl` package.
+
+## Run — TLS (h2 over TLS)
+
+One-time setup — generate self-signed certs:
+
+```bash
+./gen-tls-cert.sh
+# produces tls/{cert.pem, key.pem, ca.pem, client-cert.pem, client-key.pem}
+```
+
+Terminal 1 — TLS server on port 18443:
+
+```
+HorseNghttp2GrpcDemo.exe tls
+```
+
+Terminal 2 — Delphi-native suite:
+
+```
+HorseNghttp2GrpcTestClient.exe https://127.0.0.1:18443
+```
+
+Expected tail: `16 passed, 0 failed`. Client uses `TTlsClientContext.SetInsecure`
++ `EnableHttp2Alpn` — skips cert verification (self-signed OK) and negotiates
+`h2` via ALPN.
+
+Terminal 2 — grpcurl:
+
+```
+grpcurl -insecure -proto greeter.proto -d '{"name":"World"}' localhost:18443 greeter.Greeter/Greet
+# expected:  {"message":"Hello, World!"}
+```
+
+## Run — mTLS (server demands client cert)
+
+Same setup (certs already generated).
+
+Terminal 1 — mTLS server:
+
+```
+HorseNghttp2GrpcDemo.exe mtls
+```
+
+Terminal 2 — Delphi-native suite with client cert:
+
+```
+HorseNghttp2GrpcTestClient.exe https://127.0.0.1:18443 --client-cert tls/client-cert.pem --client-key tls/client-key.pem
+```
+
+Terminal 2 — grpcurl with client cert:
+
+```
+grpcurl -insecure -cert tls/client-cert.pem -key tls/client-key.pem \
+        -proto greeter.proto -d '{"name":"World"}' \
+        localhost:18443 greeter.Greeter/Greet
+```
+
+Both should return `{"message":"Hello, World!"}`. Omitting the client cert
+against an `mtls` server produces a TLS handshake failure (server rejects
+the connection before the HTTP/2 preface).
 
 ## Why two clients
 

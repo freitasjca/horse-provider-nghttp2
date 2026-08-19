@@ -1,4 +1,4 @@
-﻿program HorseNghttp2GrpcTestClient;
+program HorseNghttp2GrpcTestClient;
 
 // =============================================================================
 //  HorseNghttp2GrpcTestClient — Delphi-native gRPC round-trip validator (M4b).
@@ -32,15 +32,20 @@ uses
   System.SysUtils, System.Classes, System.Math,
 {$IFEND}
   Nghttp2.Client,
+  Nghttp2.Tls,          { TTlsClientContext — used when target is https:// }
   Nghttp2.Protobuf,
   Nghttp2.Protobuf.Rtti,
   Sample.Greeter.Messages;
 
 const
-  HOST = '127.0.0.1';
-  PORT = 18020;   { avoid the 9000-9100 OEM squat range on Windows — see demo .dpr header }
+  DEFAULT_TARGET_URL = 'http://127.0.0.1:18020';   { port 18020 avoids the 9000-9100 OEM squat range on Windows }
 
 var
+  GTargetHost: string = '127.0.0.1';
+  GTargetPort: Word   = 18020;
+  GUseTls:     Boolean = False;
+  GTls:        TTlsClientContext = nil;   { shared across all requests when GUseTls; freed at end }
+
   GTotal:  Integer = 0;
   GPassed: Integer = 0;
   GFailed: Integer = 0;
@@ -127,6 +132,16 @@ begin
   LHeaders[2].Value := 'identity';
 
   Result := AClient.SubmitRequest('POST', APath, LHeaders, LFramed);
+end;
+
+// Factory — build a client with TLS applied if the target URL is https://.
+// Shared context (GTls) is safe: TTlsClientContext is designed for pool-style
+// reuse across multiple TNghttp2Client instances. Non-owning assignment.
+function NewClient: TNghttp2Client;
+begin
+  Result := TNghttp2Client.Create;
+  if GUseTls and (GTls <> nil) then
+    Result.TlsContext := GTls;
 end;
 
 // ── Test cases ───────────────────────────────────────────────────────────
@@ -244,24 +259,121 @@ begin
         Format('grpc-status trailer = 12 (got "%s")', [LStat]));
 end;
 
+// ── URL parser (mirrors HorseNghttp2TestClient.ParseTargetURL) ──────────
+
+procedure ParseTargetURL(const AURL: string; out AScheme, AHost: string; out APort: Word);
+var
+  LRest: string;
+  LColonPos, LSlashPos, LSchemePos: Integer;
+begin
+  LSchemePos := Pos('://', AURL);
+  if LSchemePos = 0 then
+    raise Exception.CreateFmt(
+      'malformed target URL "%s" — expected http://host[:port] or https://host[:port]', [AURL]);
+  AScheme := LowerCase(Copy(AURL, 1, LSchemePos - 1));
+  if (AScheme <> 'http') and (AScheme <> 'https') then
+    raise Exception.CreateFmt(
+      'unsupported scheme "%s" — only http and https are supported', [AScheme]);
+
+  LRest := Copy(AURL, LSchemePos + 3, MaxInt);
+  LSlashPos := Pos('/', LRest);
+  if LSlashPos > 0 then
+    SetLength(LRest, LSlashPos - 1);
+
+  LColonPos := Pos(':', LRest);
+  if LColonPos > 0 then
+  begin
+    AHost := Copy(LRest, 1, LColonPos - 1);
+    APort := StrToIntDef(Copy(LRest, LColonPos + 1, MaxInt), 0);
+    if APort = 0 then
+      raise Exception.CreateFmt('malformed port in target URL "%s"', [AURL]);
+  end
+  else
+  begin
+    AHost := LRest;
+    if AScheme = 'https' then APort := 443 else APort := 80;
+  end;
+end;
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 var
-  LClient: TNghttp2Client;
+  LTargetURL:  string;
+  LScheme:     string;
+  LClientCert: string;
+  LClientKey:  string;
+  LArgIdx:     Integer;
+  LClient:     TNghttp2Client;
 
 begin
   try
-    WriteLn('HorseNghttp2GrpcTestClient — target http://', HOST, ':', PORT);
-    WriteLn('Prereq: HorseNghttp2GrpcDemo.exe must be running.');
+    { CLI:
+        HorseNghttp2GrpcTestClient.exe                                    — h2c local (127.0.0.1:18020)
+        HorseNghttp2GrpcTestClient.exe http://172.18.64.1:18020           — h2c cross-machine
+        HorseNghttp2GrpcTestClient.exe https://127.0.0.1:18443            — h2 over TLS
+        HorseNghttp2GrpcTestClient.exe https://127.0.0.1:18443            \
+            --client-cert tls/client-cert.pem --client-key tls/client-key.pem
+                                                                          — mTLS (server needs `mtls` mode) }
+    LTargetURL  := DEFAULT_TARGET_URL;
+    LClientCert := '';
+    LClientKey  := '';
 
-    LClient := TNghttp2Client.Create;
+    LArgIdx := 1;
+    while LArgIdx <= ParamCount do
+    begin
+      if SameText(ParamStr(LArgIdx), '--client-cert') and (LArgIdx < ParamCount) then
+      begin
+        LClientCert := ParamStr(LArgIdx + 1);
+        Inc(LArgIdx, 2);
+      end
+      else if SameText(ParamStr(LArgIdx), '--client-key') and (LArgIdx < ParamCount) then
+      begin
+        LClientKey := ParamStr(LArgIdx + 1);
+        Inc(LArgIdx, 2);
+      end
+      else
+      begin
+        LTargetURL := ParamStr(LArgIdx);
+        Inc(LArgIdx);
+      end;
+    end;
+
+    ParseTargetURL(LTargetURL, LScheme, GTargetHost, GTargetPort);
+    GUseTls := (LScheme = 'https');
+
+    // Shared TLS context (insecure = skip cert verification, self-signed OK).
+    // ALPN enabled so nghttp2 negotiates 'h2' during the handshake.
+    if GUseTls then
+    begin
+      GTls := TTlsClientContext.Create;
+      GTls.SetInsecure;
+      GTls.EnableHttp2Alpn;
+      if (LClientCert <> '') and (LClientKey <> '') then
+        GTls.SetClientCertificate(LClientCert, LClientKey);
+    end;
+
+    WriteLn('HorseNghttp2GrpcTestClient — target ', LTargetURL);
+    if GUseTls then
+    begin
+      if LClientCert <> '' then
+        WriteLn('  mode: HTTPS + mTLS (h2 over TLS, ALPN, client cert = ', LClientCert, ')')
+      else
+        WriteLn('  mode: HTTPS (h2 over TLS, ALPN, insecure cert verification)');
+    end
+    else
+      WriteLn('  mode: HTTP (h2c prior knowledge)');
+    WriteLn('Prereq: HorseNghttp2GrpcDemo.exe must be running at that endpoint.');
+
+    LClient := NewClient;
     try
-      LClient.Connect(HOST, PORT);
+      LClient.Connect(GTargetHost, GTargetPort);
       TestGreet(LClient);
       TestEcho(LClient);
       TestUnimplemented(LClient);
     finally
       LClient.Free;
+      if GTls <> nil then
+        FreeAndNil(GTls);
     end;
 
     WriteLn;

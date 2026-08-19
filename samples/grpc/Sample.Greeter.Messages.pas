@@ -18,6 +18,13 @@ unit Sample.Greeter.Messages;
 
 interface
 
+// FPC needs explicit extended-RTTI directive alongside {$M+} — otherwise
+// TRttiType.GetProperties returns 0 (see delphi-fpc-compat). Directive must
+// live INSIDE `interface`, not above it (FPC rejects it at unit-scope).
+{$IF DEFINED(FPC)}
+  {$RTTI EXPLICIT PROPERTIES([vcPublished]) FIELDS([vcPublic]) METHODS([vcPublic])}
+{$ENDIF}
+
 uses
   Nghttp2.Protobuf;   // TGrpcMessageAttribute + TProtoMemberAttribute
 

@@ -9,7 +9,7 @@ unit DemoService;
 //    ServiceStop  ? THorse.StopListen + WaitFor(worker)
 //
 //  This unit adds route registration in ServiceCreate (fires before
-//  ServiceStart). No custom lifecycle overrides needed — the base class
+//  ServiceStart). No custom lifecycle overrides needed ï¿½ the base class
 //  handles everything.
 // ============================================================================
 

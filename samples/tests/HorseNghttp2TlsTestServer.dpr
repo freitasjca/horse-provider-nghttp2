@@ -1,4 +1,4 @@
-﻿program HorseNghttp2TlsTestServer;
+program HorseNghttp2TlsTestServer;
 
 // ============================================================================
 //  TLS smoke-test server for horse-provider-nghttp2 (h2 over TLS with ALPN).
@@ -36,26 +36,16 @@
 {$IFEND}
 
 uses
-  {$IF DEFINED(FPC)}
-  SysUtils,
-  {$ELSE}
-  System.SysUtils,
-  System.Classes,
-  {$IFEND }
+{$IF DEFINED(FPC)}
+  SysUtils, Classes,
+{$ELSE}
+  System.SysUtils, System.Classes,
+{$IFEND}
   Horse,
   Horse.Commons,
   Horse.Exception,
   Horse.Provider.Nghttp2,
-  Horse.Provider.Config,
-  Nghttp2.Native in '..\..\..\Delphi-nghttp2\src\Nghttp2.Native.pas',
-  Nghttp2.OpenSSL in '..\..\..\Delphi-nghttp2\src\Nghttp2.OpenSSL.pas',
-  Nghttp2.Server in '..\..\..\Delphi-nghttp2\src\Nghttp2.Server.pas',
-  Nghttp2.Session in '..\..\..\Delphi-nghttp2\src\Nghttp2.Session.pas',
-  Nghttp2.Socket in '..\..\..\Delphi-nghttp2\src\Nghttp2.Socket.pas',
-  Nghttp2.Tls in '..\..\..\Delphi-nghttp2\src\Nghttp2.Tls.pas',
-  Nghttp2.Types in '..\..\..\Delphi-nghttp2\src\Nghttp2.Types.pas';
-
-{ for THorseCrossSocketConfig with SSL* fields }
+  Horse.Provider.Config;    { for THorseCrossSocketConfig with SSL* fields }
 
 const
   TEST_PORT      = 9443;

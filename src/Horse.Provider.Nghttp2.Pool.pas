@@ -44,6 +44,19 @@ type
     property Response: THorseResponse read FResponse;
   end;
 
+const
+  // Contexts kept warm from the outset. Sized for the async provider, where
+  // a whole worker pool can reach for contexts at once instead of one
+  // connection thread at a time.
+  POOL_PREWARM_COUNT = 32;
+
+  // Ceiling on retained contexts. Acquire still allocates past this under a
+  // burst — a request is never refused for want of a context — but Release
+  // discards the overflow instead of retaining it, so a momentary spike does
+  // not become the process's permanent resident set.
+  POOL_MAX_SIZE = 512;
+
+type
   THorseContextPool = class
   private
     class var FInstance: THorseContextPool;
@@ -51,10 +64,13 @@ type
     FLock: TCriticalSection;
     procedure PrewarmPool(ACount: Integer);
   public
+    { Not thread-safe on first call — it lazily constructs. The provider calls
+      it once from InternalListen, before the listener opens, so that every
+      later call from a worker thread only reads an already-built instance. }
     class function  Instance: THorseContextPool; static;
     class procedure ReleaseInstance; static;
 
-    constructor Create(APrewarmCount: Integer = 16);
+    constructor Create(APrewarmCount: Integer = POOL_PREWARM_COUNT);
     destructor  Destroy; override;
 
     function  Acquire: THorseContext;
@@ -156,15 +172,23 @@ begin
 end;
 
 procedure THorseContextPool.Release(AContext: THorseContext);
+var
+  LDiscard: Boolean;
 begin
   if AContext = nil then Exit;
   AContext.Reset;
   FLock.Enter;
   try
-    FPool.Push(AContext);
+    LDiscard := FPool.Count >= POOL_MAX_SIZE;
+    if not LDiscard then
+      FPool.Push(AContext);
   finally
     FLock.Leave;
   end;
+  // Free outside the lock — THorseContext.Destroy tears down a request and a
+  // response, which is far too much work to hold the pool lock through.
+  if LDiscard then
+    AContext.Free;
 end;
 
 // ─── Singleton accessor ──────────────────────────────────────────────────

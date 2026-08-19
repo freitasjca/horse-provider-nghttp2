@@ -1,4 +1,4 @@
-﻿program HorseNghttp2DaemonDemo;
+program HorseNghttp2DaemonDemo;
 
 // ============================================================================
 //  Cross-platform Delphi daemon demo for horse-provider-nghttp2.
@@ -37,29 +37,16 @@
 {$IFEND}
 
 uses
-  {$IF DEFINED(FPC)}
+{$IF DEFINED(FPC)}
   SysUtils,
-  {$IFDEF UNIX}
-  BaseUnix,
-  {$ENDIF }
-  {$ELSE}
+  {$IFDEF UNIX}BaseUnix,{$ENDIF}            { FpGetPid on FPC/POSIX }
+{$ELSE}
   System.SysUtils,
-  {$IFDEF MSWINDOWS}
-  Winapi.Windows,
-  {$ENDIF }
-  {$IFDEF POSIX}
-  Posix.Unistd,
-  {$ENDIF }
-  {$IFEND }
+  {$IFDEF MSWINDOWS}Winapi.Windows,{$ENDIF} { GetCurrentProcessId on Delphi/Windows }
+  {$IFDEF POSIX}Posix.Unistd,{$ENDIF}       { getpid on Delphi/POSIX (Linux, macOS) }
+{$IFEND}
   Horse,
-  Horse.Provider.Nghttp2.Daemon,
-  Nghttp2.Types in '..\..\..\Delphi-nghttp2\src\Nghttp2.Types.pas',
-  Nghttp2.Tls in '..\..\..\Delphi-nghttp2\src\Nghttp2.Tls.pas',
-  Nghttp2.Socket in '..\..\..\Delphi-nghttp2\src\Nghttp2.Socket.pas',
-  Nghttp2.Session in '..\..\..\Delphi-nghttp2\src\Nghttp2.Session.pas',
-  Nghttp2.Server in '..\..\..\Delphi-nghttp2\src\Nghttp2.Server.pas',
-  Nghttp2.OpenSSL in '..\..\..\Delphi-nghttp2\src\Nghttp2.OpenSSL.pas',
-  Nghttp2.Native in '..\..\..\Delphi-nghttp2\src\Nghttp2.Native.pas';
+  Horse.Provider.Nghttp2.Daemon;
 
 const
   DAEMON_PORT = 9200;

@@ -1,4 +1,4 @@
-﻿program HorseNghttp2TestServer;
+program HorseNghttp2TestServer;
 
 // =============================================================================
 //  Smoke-test server for horse-provider-nghttp2 (h2c cleartext HTTP/2).
@@ -33,29 +33,36 @@
 {$IFEND}
 
 uses
-  {$IF DEFINED(FPC)}
-  SysUtils,
-  {$ELSE}
-  System.SysUtils,
-  System.Classes,
-  {$IFEND }
+{$IF DEFINED(FPC)}
+  {$IF DEFINED(UNIX)}
+  cthreads,   { MUST be the first unit on FPC/Unix — installs the pthreads
+                threading driver before any other unit's initialization can
+                touch TThread. The nghttp2 provider spawns an accept thread
+                plus one thread per connection, so without this the server
+                dies at run time with "This binary has no threading support
+                compiled in". }
+  {$IFEND}
+  SysUtils, Classes, DateUtils,
+{$ELSE}
+  System.SysUtils, System.Classes, System.DateUtils,
+{$IFEND}
   Horse,
   Horse.Commons,
   Horse.Exception,
   Horse.Exception.Interrupted,
   Horse.Provider.Nghttp2,
-  Horse.Provider.Config,
-  Nghttp2.Native in '..\..\..\Delphi-nghttp2\src\Nghttp2.Native.pas',
-  Nghttp2.OpenSSL in '..\..\..\Delphi-nghttp2\src\Nghttp2.OpenSSL.pas',
-  Nghttp2.Server in '..\..\..\Delphi-nghttp2\src\Nghttp2.Server.pas',
-  Nghttp2.Session in '..\..\..\Delphi-nghttp2\src\Nghttp2.Session.pas',
-  Nghttp2.Socket in '..\..\..\Delphi-nghttp2\src\Nghttp2.Socket.pas',
-  Nghttp2.Tls in '..\..\..\Delphi-nghttp2\src\Nghttp2.Tls.pas',
-  Nghttp2.Types in '..\..\..\Delphi-nghttp2\src\Nghttp2.Types.pas',
-  Nghttp2.Protobuf.Rtti in '..\..\..\Delphi-nghttp2\src\Nghttp2.Protobuf.Rtti.pas',
-  Nghttp2.Protobuf in '..\..\..\Delphi-nghttp2\src\Nghttp2.Protobuf.pas';
-
-{ for THorseCrossSocketConfig with SSL* fields (TLS mode) }
+  { Linking this is what makes `eventloop` do anything — Nghttp2.Server holds
+    only a function pointer and never names the unit. Unconditional on
+    purpose: on Windows and macOS it compiles to an empty unit, so it costs
+    nothing and there is no platform branch to get wrong here. }
+  Nghttp2.Engine.Epoll,
+  { The two engines are mutually exclusive BY PLATFORM, not by configuration:
+    each compiles to an empty unit off its own OS, so exactly one of them
+    reaches its initialization and assigns Nghttp2EngineFactory. Linking both
+    unconditionally is therefore safe and is what makes `eventloop` mean epoll
+    on Linux and IOCP on Windows with no define anywhere. }
+  Nghttp2.Engine.Iocp,
+  Horse.Provider.Config;   { for THorseCrossSocketConfig with SSL* fields (TLS mode) }
 
 const
   TEST_PORT_H2C = 9010;    // cleartext HTTP/2 (h2c prior knowledge)
@@ -77,6 +84,64 @@ end;
 procedure GetPing(Req: THorseRequest; Res: THorseResponse);
 begin
   Res.Send('pong');
+end;
+
+// ─── Load-shedding counter (OBSERV-1) ──────────────────────────────────────
+//  GET /metrics/shed — reports THorseProviderNghttp2.SheddedRequests.
+//
+//  Exists so the counter can be CHECKED rather than trusted. Adding a counter
+//  and never reading it is how the thing it measures stays invisible: the
+//  one-shot log line proves the code path executes, but only a reader proves
+//  the number is right.
+//
+//  Validation: run a load that saturates the pool and compare this value with
+//  h2load's "status codes: N 5xx". They should agree closely — exactly, if
+//  nothing else in the process answers 503, which on this server is the case.
+//
+//  Note it is a per-PROCESS counter reset by Listen, not per-connection, so a
+//  reader on any connection sees the whole server's total.
+procedure GetShedMetrics(Req: THorseRequest; Res: THorseResponse);
+begin
+  // ContentType BEFORE Send, matching every other handler here. The reverse
+  // order compiles, but sets the header after the body is composed — at best
+  // inconsistent, at worst ignored.
+  // Both counters, because they answer different questions. inlineFallbacks
+  // rises FIRST — the queue filled and threads absorbed the overflow.
+  // sheddedRequests rises only once MaxInlineFallback threads are already
+  // blocked, i.e. the fallback ran out of room too. Seeing the first climb
+  // with the second at zero is the pool saturating without anyone refused.
+  Res.ContentType('application/json; charset=utf-8')
+     .Send('{"sheddedRequests":'
+       + IntToStr(THorseProviderNghttp2.SheddedRequests)
+       + ',"inlineFallbacks":'
+       + IntToStr(THorseProviderNghttp2.InlineFallbacks) + '}');
+end;
+
+// ─── Deliberately slow route (benchmarking) ────────────────────────────────
+//  GET /slow/:ms — sleeps, then replies. Exists so a load generator can
+//  measure what the dispatch pool is actually for.
+//
+//  Every other route here returns instantly, which makes them all useless for
+//  that: with nothing to overlap, a pool can only add handoff cost, so
+//  benchmarking /ping measures overhead and reports it as though it were
+//  throughput. Sleeping stands in for the real thing — a query, an upstream
+//  call — where the thread is parked and the transport is free to run other
+//  streams on the same connection.
+//
+//  Serial expectation: N concurrent requests against /slow/50 take
+//  N x 50 ms with inline dispatch, and roughly (N / workers) x 50 ms with
+//  the pool. That ratio is the measurement.
+procedure GetSlow(Req: THorseRequest; Res: THorseResponse);
+var
+  LMs: Integer;
+begin
+  LMs := StrToIntDef(Req.Params['ms'], 50);
+  // Clamp: a benchmark typo should not park a worker for an hour.
+  if LMs < 0    then LMs := 0;
+  if LMs > 5000 then LMs := 5000;
+  Sleep(LMs);
+  Res.ContentType('application/json; charset=utf-8')
+     .Send(Format('{"sleptMs":%d}', [LMs]));
 end;
 
 // ─── Methods (GET/POST/PUT/DELETE/PATCH/HEAD) ──────────────────────────────
@@ -326,7 +391,17 @@ end;
 
 // Middleware that runs first for /raw/cors — sets ACAO on both GET and OPTIONS,
 // short-circuits with 204 for OPTIONS (Horse.CORS convention).
-procedure CorsMiddleware(Req: THorseRequest; Res: THorseResponse; Next: TProc);
+// Next is TNextProc, NOT TProc. On Delphi the two are the same type
+// (Horse.Proc declares TNextProc = System.SysUtils.TProc), which hides the
+// divergence entirely; on FPC TNextProc is `procedure of object`, TProc is
+// not, and the procedure then fails to match THorseCallbackProc with an
+// "Incompatible type for arg no. 1 ... expected Open Array Of THorseCallback".
+// Always spell middleware signatures with TNextProc — correct on both.
+//
+// (Comment uses // per line: the compiler message this documents contains a
+// brace, and Delphi/FPC { } comments do not nest — an inner } ends the
+// comment early. See memory feedback_delphi_brace_comment_nesting.)
+procedure CorsMiddleware(Req: THorseRequest; Res: THorseResponse; Next: TNextProc);
 begin
   if Pos('/raw/cors', Req.RawWebRequest.PathInfo) = 1 then
   begin
@@ -391,11 +466,150 @@ begin
      .Send('hello');
 end;
 
+// ─── Graceful-shutdown harness (benchmark/CI) ──────────────────────────────
+//  `shutdown-after=N` fires THorse.StopListenGraceful from a background
+//  thread N ms after startup, so a load generator can have requests in flight
+//  when it lands. Nothing else in the suite exercises shutdown at all — Ctrl-C
+//  just kills the process — yet the drain path carries the most delicate
+//  bookkeeping in the provider: the in-flight counter that brackets queue
+//  time, the connection-thread wait for outstanding workers, and the worker
+//  pool draining rather than dropping what it has queued. A hang or a leak
+//  there is invisible to every request-level test.
+//
+//  Usage:
+//    HorseNghttp2TestServer.exe shutdown-after=2000 shutdown-timeout=10000
+//    h2load -n 200 -c 4 -m 25 http://<host>:9010/slow/500
+//
+//  Exit code: 0 = drained cleanly, 1 = deadline hit or requests stranded.
+
+type
+  { Reports which connection driver the transport actually resolved.
+
+    Needed because the banner prints before Listen, and Listen blocks for the
+    life of the server — so at banner time the answer does not exist yet.
+    `eventloop` is a request that degrades silently when the platform or the
+    linked units cannot honour it, and an unlabelled fallback is exactly how a
+    measurement gets attributed to the wrong configuration. }
+  TDriverProbe = class(TThread)
+  private
+    FRequested: Boolean;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(ARequested: Boolean);
+  end;
+
+  TShutdownTrigger = class(TThread)
+  private
+    FDelayMS:   Integer;
+    FTimeoutMS: Integer;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(ADelayMS, ATimeoutMS: Integer);
+  end;
+
+constructor TDriverProbe.Create(ARequested: Boolean);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FRequested      := ARequested;
+end;
+
+procedure TDriverProbe.Execute;
+begin
+  // Long enough for Start to have run and the engine, if any, to have
+  // registered. Short enough to land before the first request in any suite.
+  Sleep(400);
+  if Terminated then Exit;
+
+  // Ask the engine what it is. This used to print 'epoll event loop'
+  // unconditionally, which on Windows named the wrong driver while every
+  // harness gate — all of which match that literal text — passed.
+  if THorseProviderNghttp2.EventLoopActive then
+    WriteLn('[driver] RESOLVED: ' + THorseProviderNghttp2.EngineName)
+  else if FRequested then
+    WriteLn('[driver] RESOLVED: thread per connection ' +
+            '— event loop was REQUESTED but is unavailable ' +
+            '(no engine unit linked for this platform)')
+  else
+    WriteLn('[driver] RESOLVED: thread per connection');
+end;
+
+constructor TShutdownTrigger.Create(ADelayMS, ATimeoutMS: Integer);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FDelayMS   := ADelayMS;
+  FTimeoutMS := ATimeoutMS;
+end;
+
+procedure TShutdownTrigger.Execute;
+var
+  LBefore:  Integer;
+  LStart:   TDateTime;
+  LElapsed: Integer;
+begin
+  Sleep(FDelayMS);
+
+  LBefore := THorse.ActiveRequests;
+  WriteLn;
+  WriteLn('[shutdown] firing StopListenGraceful(', FTimeoutMS, ' ms)');
+  WriteLn('[shutdown]   in flight at trigger: ', LBefore);
+
+  LStart := Now;
+  // Framework facade, per horse/.agents/AGENTS.md — resolves to the provider
+  // override through THorse = class(THorseProvider).
+  THorse.StopListenGraceful(FTimeoutMS);
+  LElapsed := MilliSecondsBetween(Now, LStart);
+
+  WriteLn('[shutdown]   returned after: ', LElapsed, ' ms');
+  WriteLn('[shutdown]   in flight after: ', THorse.ActiveRequests);
+  // Expected False: the flag marks the shutdown window, and the provider
+  // clears it on the way out to match THorseProviderAbstract's contract.
+  WriteLn('[shutdown]   IsShuttingDown after return: ',
+          BoolToStr(THorse.IsShuttingDown, True), ' (cleared by contract)');
+
+  // Returning at (or past) the deadline means the drain never completed and
+  // the hard cutoff did the work instead — in-flight requests were severed.
+  if LElapsed >= FTimeoutMS then
+  begin
+    WriteLn('[shutdown] FAIL: hit the ', FTimeoutMS, ' ms deadline — drain did not complete');
+    ExitCode := 1;
+  end
+  else if THorse.ActiveRequests <> 0 then
+  begin
+    WriteLn('[shutdown] FAIL: returned with ', THorse.ActiveRequests, ' request(s) still active');
+    ExitCode := 1;
+  end
+  else
+  begin
+    WriteLn('[shutdown] PASS: server-side drain completed in ', LElapsed, ' ms');
+    // Deliberately narrow. This proves the server believes it drained — the
+    // counter reached zero and the deadline was not hit. It cannot prove the
+    // replies were delivered, because that is only observable at the client.
+    // Check the load generator: succeeded should account for everything it
+    // started. A server-side PASS alongside a pile of client-side errors is
+    // the signature of a drain that finished before the responses were on the
+    // wire, which is exactly what AllConnectionsIdle now guards against.
+    WriteLn('[shutdown]   verify delivery client-side — h2load "succeeded" should');
+    WriteLn('[shutdown]   equal "started"; errors there mean replies were severed.');
+  end;
+end;
+
 // ─── main ──────────────────────────────────────────────────────────────────
 
 var
   LUseTls:   Boolean;
   LUseMTls:  Boolean;
+  LInline:   Boolean;
+  LEventLoop: Boolean;
+  LLoops:     Integer;
+  LWorkers:  Integer;
+  LShutAfter:   Integer;
+  LShutTimeout: Integer;
+  LTrigger:     TShutdownTrigger;
+  LProbe:       TDriverProbe;
   LPort:     Word;
   LCfg:      THorseCrossSocketConfig;
   LExeDir:   string;
@@ -410,11 +624,44 @@ begin
     // (server cert + client cert required, signed by ca.pem). mtls implies tls.
     LUseTls  := False;
     LUseMTls := False;
+    LInline      := False;
+    LEventLoop   := False;
+    LLoops       := 0;
+    LWorkers     := 0;
+    LShutAfter   := 0;      // 0 = never auto-shutdown
+    LShutTimeout := 10000;
+    LTrigger     := nil;
+    LProbe       := nil;
     for I := 1 to ParamCount do
     begin
       if SameText(ParamStr(I), 'tls')  then LUseTls  := True;
       if SameText(ParamStr(I), 'mtls') then begin LUseTls := True; LUseMTls := True; end;
+      // Benchmarking controls — the A/B for what the dispatch pool buys.
+      // `inline` runs the pipeline on the connection thread (pre-pool
+      // behaviour); `workers=N` pins the pool size instead of auto-sizing.
+      if SameText(ParamStr(I), 'inline') then LInline := True;
+      if SameText(Copy(ParamStr(I), 1, 8), 'workers=') then
+        LWorkers := StrToIntDef(Copy(ParamStr(I), 9, MaxInt), 0);
+      // `eventloop` swaps the thread-per-connection driver for the epoll
+      // engine. Linux + h2c only; ignored anywhere else.
+      if SameText(ParamStr(I), 'eventloop') then LEventLoop := True;
+      // `loops=N` sizes the event-loop pool; 0/absent = one per core.
+      if SameText(Copy(ParamStr(I), 1, 6), 'loops=') then
+        LLoops := StrToIntDef(Copy(ParamStr(I), 7, MaxInt), 0);
+      // Graceful-shutdown harness — see TShutdownTrigger above.
+      if SameText(Copy(ParamStr(I), 1, 15), 'shutdown-after=') then
+        LShutAfter := StrToIntDef(Copy(ParamStr(I), 16, MaxInt), 0);
+      if SameText(Copy(ParamStr(I), 1, 17), 'shutdown-timeout=') then
+        LShutTimeout := StrToIntDef(Copy(ParamStr(I), 18, MaxInt), 0);
     end;
+
+    if LInline then
+      THorseProviderNghttp2.WorkerThreads := WORKER_THREADS_INLINE
+    else if LWorkers > 0 then
+      THorseProviderNghttp2.WorkerThreads := LWorkers;
+
+    THorseProviderNghttp2.UseEventLoop  := LEventLoop;
+    THorseProviderNghttp2.EngineThreads := LLoops;
 
     if LUseTls then
       LPort := TEST_PORT_H2
@@ -477,6 +724,44 @@ begin
       WriteLn('mTLS mode:     HorseNghttp2TestServer.exe mtls   (needs tls/ca.pem too)');
     end;
     WriteLn('curl suite:    ./run-smoke-tests.sh');
+
+    // Print the dispatch mode, and always the resolved thread count rather
+    // than just "auto": a benchmark that cannot tell which configuration it
+    // measured is not a measurement, and a pool that came up with a single
+    // thread reads identically to a healthy one in the logs while behaving
+    // like inline dispatch.
+    if LInline then
+      WriteLn('Dispatch:      INLINE (no worker pool — pre-2026-08 behaviour)')
+    else if LWorkers > 0 then
+      WriteLn('Dispatch:      worker pool, ', LWorkers, ' threads (pinned)')
+    else
+      WriteLn('Dispatch:      worker pool, ', TThread.ProcessorCount,
+              ' threads (auto: one per core)');
+    { Same reason the dispatch line prints a resolved number: `eventloop` is a
+      REQUEST, not a guarantee — on Windows, or without Nghttp2.Engine.Epoll
+      linked, it degrades silently to the thread driver. A run that cannot be
+      told apart from the default is worthless as a comparison, so say which
+      was asked for and name the condition that decides it. }
+    if LEventLoop then
+    begin
+      WriteLn('Driver:        EVENT LOOP requested — epoll on Linux, IOCP on Windows');
+      if LLoops > 0 then
+        WriteLn('               loops=', LLoops, ' (pinned)')
+      else
+        WriteLn('               loops=', TThread.ProcessorCount, ' (auto: one per core)');
+    end
+    else
+      WriteLn('Driver:        thread per connection (default)');
+    WriteLn('               resolved driver is printed below once listening');
+    WriteLn('Bench route:   /slow/:ms   e.g. /slow/50');
+    WriteLn('Dispatch stats: GET /metrics/shed   (sheddedRequests + inlineFallbacks)');
+    WriteLn('Compare with:  HorseNghttp2TestServer.exe inline   (or workers=N)');
+    WriteLn('Event loop:    HorseNghttp2TestServer eventloop [loops=N]');
+    if LShutAfter > 0 then
+      WriteLn('Shutdown test: StopListenGraceful(', LShutTimeout, ' ms) fires in ',
+              LShutAfter, ' ms  — exit code reports the verdict')
+    else
+      WriteLn('Shutdown test: HorseNghttp2TestServer.exe shutdown-after=2000 [shutdown-timeout=10000]');
     WriteLn('Ctrl-C to stop.');
     WriteLn;
 
@@ -485,6 +770,8 @@ begin
 
     // ─── Ping ──────────────────────────────────────────────────────────────
     THorse.Get   ('/ping',                       GetPing);
+    THorse.Get   ('/slow/:ms',                   GetSlow);   // benchmarking — see GetSlow
+    THorse.Get   ('/metrics/shed',               GetShedMetrics);  // OBSERV-1 counter
 
     // ─── Methods ───────────────────────────────────────────────────────────
     THorse.Get   ('/methods/get',                MethodsGet);
@@ -543,6 +830,19 @@ begin
     // ─── M2b: HTTP/2 trailer demo (gRPC-style grpc-status trailer) ─────────
     THorse.Get   ('/grpc-status-zero',           GrpcStatusZero);
 
+    // Started before Listen, which blocks the main thread for the lifetime of
+    // a console server. StopListenGraceful is what releases it.
+    if LShutAfter > 0 then
+    begin
+      LTrigger := TShutdownTrigger.Create(LShutAfter, LShutTimeout);
+      LTrigger.Start;
+    end;
+
+    // Same reason as the trigger: the answer only exists after Listen has
+    // started the transport, and Listen never returns until shutdown.
+    LProbe := TDriverProbe.Create(LEventLoop);
+    LProbe.Start;
+
     if LUseTls then
     begin
       // TLS mode: pass cert+key via the shared cross-provider config record.
@@ -564,6 +864,23 @@ begin
     end
     else
       THorse.Listen(LPort);
+
+    // Listen has returned, so the trigger has called StopListenGraceful — but
+    // it may still be printing its verdict and setting ExitCode. Join before
+    // exiting or the process can race past its own result.
+    if LTrigger <> nil then
+    begin
+      LTrigger.WaitFor;
+      LTrigger.Free;
+    end;
+
+    // Joined too — it only sleeps 400 ms, but a server stopped faster than
+    // that would otherwise leak the thread and race its own WriteLn.
+    if LProbe <> nil then
+    begin
+      LProbe.WaitFor;
+      LProbe.Free;
+    end;
   except
     on E: Exception do
     begin

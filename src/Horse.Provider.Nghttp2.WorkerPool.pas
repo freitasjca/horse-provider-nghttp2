@@ -143,9 +143,15 @@ begin
 
     // Drain everything currently in the queue before waiting again — a
     // single wake can correspond to multiple enqueues.
+    //
+    // Deliberately no Terminated check inside this loop: a queued task may
+    // hold resources whose release is its own responsibility (the nghttp2
+    // provider pairs each task with a dispatch counter that keeps a
+    // connection alive until the task runs). Dropping queued tasks on
+    // shutdown would strand those. Stop already blocks Submit once it begins,
+    // so the queue is finite here and drains promptly.
     while FPool.DequeueTask(LTask) do
     begin
-      if Terminated then Break;
       try
         LTask.Execute;
       except
