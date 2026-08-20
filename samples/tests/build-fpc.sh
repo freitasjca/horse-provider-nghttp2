@@ -36,6 +36,9 @@
 #   14  94-check suite over mTLS via the EVENT LOOP, positive AND negative —
 #       the negative is the one that matters: a resumable handshake that
 #       wrongly SUCCEEDS passes every positive check ever written
+#   15  streaming arrives INCREMENTALLY (curl -N timing) — the one streaming
+#       property no Pascal client here can observe, because TNghttp2Client
+#       returns a completed response
 #
 #  Stages 1-11 all exercise the thread-per-connection driver. Stage 12 is the
 #  only one that executes the epoll engine, and it fails rather than passes if
@@ -897,6 +900,80 @@ else
   kill -TERM "$SRV" 2>/dev/null || true
   wait "$SRV" 2>/dev/null || true
   wait_port_free "$TLS_PORT" 15 || true
+fi
+
+# ── 15 · streaming delivery is INCREMENTAL (STREAM-1) ────────────────────────
+# The Pascal client cannot verify this and never will: TNghttp2Client returns a
+# completed response, so a stream correctly delivered in five DATA frames is
+# byte-identical to one buffered whole and flushed at the end. Every check in
+# the 94-suite passes either way.
+#
+# curl -N is what separates them. With --no-buffer each DATA frame is printed
+# as it lands, so timestamping the lines shows the arrival PATTERN. The server's
+# /stream/sse sleeps 60 ms between events, so ~240 ms should separate the first
+# line from the last. Buffered delivery collapses that to roughly zero.
+#
+# The gate is deliberately loose (>= 150 ms against an expected 240 ms). This
+# runs in a container on a borrowed kernel where scheduling jitter is real, and
+# a tight bound here would fail for reasons that have nothing to do with
+# streaming. Loose is fine: the failure being guarded against is a total
+# collapse to ~0 ms, not a 20% drift.
+echo
+echo "── 15  streaming delivers incrementally (curl -N timing) ───────────────"
+if ! command -v curl >/dev/null 2>&1; then
+  echo "  SKIP  curl not installed — cannot observe frame arrival timing"
+elif ! wait_port_free "$PORT" 15; then
+  echo "  SKIP  port $PORT still bound"
+else
+  stdbuf -o0 -e0 ./HorseNghttp2TestServer < /dev/null > "$WORK/stream-server.log" 2>&1 &
+  SRV=$!
+  SERVERS+=("$SRV")
+  sleep 0.8
+  if ! kill -0 "$SRV" 2>/dev/null; then
+    fail "streaming server exited at startup"
+    tail -4 "$WORK/stream-server.log" | sed 's/^/    | /'
+  else
+    # %s.%N per line, so the delta is measured at the point of ARRIVAL rather
+    # than inferred from curl's total. awk holds first and last and prints the
+    # span in milliseconds.
+    SPAN=$(curl -sN --http2-prior-knowledge --max-time 20 \
+             "http://127.0.0.1:$PORT/stream/sse" 2>/dev/null \
+           | while IFS= read -r line; do
+               [[ -n "$line" ]] && printf '%s\n' "$(date +%s.%N)"
+             done \
+           | awk 'NR==1{f=$1} {l=$1} END{if(NR>0) printf "%d", (l-f)*1000; else print -1}')
+
+    EVENTS=$(curl -sN --http2-prior-knowledge --max-time 20 \
+               "http://127.0.0.1:$PORT/stream/sse" 2>/dev/null \
+             | grep -c '^event: message' || true)
+
+    if [[ "$EVENTS" != "5" ]]; then
+      fail "streaming SSE — expected 5 events, got $EVENTS"
+    elif [[ "${SPAN:--1}" -lt 0 ]]; then
+      fail "streaming SSE — no lines arrived; cannot measure delivery"
+    elif [[ "$SPAN" -lt 150 ]]; then
+      # Everything arrived at once. The DATA frames were held until the
+      # handler returned, which is precisely the defect DEFERRED/resume exists
+      # to prevent — and which every status-and-body check would still pass.
+      fail "streaming NOT incremental — 5 paced events spanned only ${SPAN}ms (expected >=150ms)"
+    else
+      pass "streaming incremental — 5 events spanned ${SPAN}ms"
+    fi
+
+    # Empty stream: a handler that writes nothing must still complete with
+    # headers. Regression guard for TNghttp2StreamWriter.Close.
+    ESTATUS=$(curl -sN --http2-prior-knowledge --max-time 10 \
+                -o /dev/null -w '%{http_code}' \
+                "http://127.0.0.1:$PORT/stream/empty" 2>/dev/null || echo 000)
+    if [[ "$ESTATUS" == "200" ]]; then
+      pass "empty stream completes with 200 (headers emitted on close)"
+    else
+      fail "empty stream returned $ESTATUS, expected 200"
+    fi
+  fi
+  kill -TERM "$SRV" 2>/dev/null || true
+  wait "$SRV" 2>/dev/null || true
+  wait_port_free "$PORT" 15 || true
 fi
 
 echo

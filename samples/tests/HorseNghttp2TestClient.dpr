@@ -29,8 +29,15 @@ program HorseNghttp2TestClient;
 //    - Multipart POST (test 12): built inline as a raw multipart/form-data
 //      byte buffer (no library helper) — same 200-or-400 acceptance criterion.
 //
-//    - Streaming (33–36): our server returns 501 for /stream/* (same as ICS)
-//      because chunked framing is a v1.1 provider feature. Checks accept 501.
+//    - Streaming (33–37, STREAM-1): real Web Streams / SSE as of this build;
+//      v1.0.0 answered 501 here. On HTTP/2 there is no chunked framing to
+//      assert — DATA frames carry their own length — so the checks look at
+//      the reassembled body and the content-type, not at wire framing. The
+//      one thing they deliberately do NOT assert is chunk ARRIVAL TIMING:
+//      TNghttp2Client returns a completed response, so a stream that was
+//      correctly delivered in five frames is indistinguishable here from one
+//      buffered whole. `curl -N` is what shows the difference; see the
+//      /stream/sse note in the server.
 //
 //  Test matrix — identical intent to the ICS/CS suites:
 //
@@ -66,10 +73,11 @@ program HorseNghttp2TestClient;
 //    30  POST   /pool/burst  rapid sequential → 5 back-to-back after burst
 //    31  POST   /echo/body-twice             → "equal":true (PATCH-REQ-9)
 //    32  GET    /compat/rawbody              → body = "shadow-wins"
-//    33  GET    /stream/pull                 → 501 + server healthy
-//    34  GET    /stream/content-type         → 501 + server healthy
-//    35  GET    /stream/empty                → 501 + server healthy
-//    36  GET    /stream/pull  ×2 concurrent  → both 501, server healthy
+//    33  GET    /stream/pull                 → 200, 5 NDJSON records in order
+//    34  GET    /stream/content-type         → 200 + declared content-type
+//    35  GET    /stream/empty                → 200 + empty body (headers sent)
+//    36  GET    /stream/pull  ×2 concurrent  → both complete, both 5 records
+//    37  GET    /stream/sse                  → 200 text/event-stream, 5 events
 // ============================================================================
 
 {$IF DEFINED(FPC)}
@@ -83,9 +91,10 @@ uses
                 TConcurrentThread instances; without the pthreads driver the
                 binary aborts on the first thread creation. }
   {$IFEND}
-  SysUtils, Classes, SyncObjs,
+  SysUtils, Classes, SyncObjs, StrUtils,
 {$ELSE}
   System.SysUtils, System.Classes, System.SyncObjs, System.Diagnostics,
+  System.StrUtils,   { PosEx — OccurrenceCount, used by the streaming checks }
 {$IFEND}
   Nghttp2.Client,
   Nghttp2.Tls;   { for TTlsClientContext when target URL is https:// }
@@ -233,6 +242,24 @@ begin
   for I := 0 to High(AResp.Headers) do
     if SameText(AResp.Headers[I].Name, AName) then
       Exit(AResp.Headers[I].Value);
+end;
+
+{ Non-overlapping occurrences of ASub in AStr. Used by the streaming checks
+  (STREAM-1) to count records without splitting into a list — counting is the
+  whole assertion, and a delimiter-split would additionally have to reason
+  about whether a trailing delimiter yields an empty final element. }
+function OccurrenceCount(const AStr, ASub: string): Integer;
+var
+  LPos: Integer;
+begin
+  Result := 0;
+  if (AStr = '') or (ASub = '') then Exit;
+  LPos := Pos(ASub, AStr);
+  while LPos > 0 do
+  begin
+    Inc(Result);
+    LPos := PosEx(ASub, AStr, LPos + Length(ASub));
+  end;
 end;
 
 // Returns the first Set-Cookie value for the given cookie name (before ';').
@@ -693,38 +720,71 @@ begin
     Pos('raw-stub', R.Body) = 0, R.Body);
 
   // ─── 33 ────────────────────────────────────────────────────────────────
-  Section('33  GET /stream/pull  (nghttp2: streaming not supported → 501)');
+  //  Five records, and they must arrive IN ORDER and WHOLE. Order is the
+  //  interesting half: the writer appends into a buffer a data provider on
+  //  another thread drains, so a locking mistake shows up here as interleaved
+  //  or truncated records rather than as a crash.
+  Section('33  GET /stream/pull  (NDJSON Web Stream — STREAM-1)');
   R := DoRequest('GET', '/stream/pull', nil, nil);
-  Check('status 501 (streaming not implemented on nghttp2 transport)',
-    R.Status = 501, IntToStr(R.Status));
-  Check('body contains "error" key', Pos('error', R.Body) > 0, R.Body);
+  Check('status 200', R.Status = 200, IntToStr(R.Status));
+  Check('5 NDJSON records present',
+    (Pos('{"id":1}', R.Body) > 0) and (Pos('{"id":2}', R.Body) > 0) and
+    (Pos('{"id":3}', R.Body) > 0) and (Pos('{"id":4}', R.Body) > 0) and
+    (Pos('{"id":5}', R.Body) > 0), R.Body);
+  Check('records in order (1 before 5)',
+    Pos('{"id":1}', R.Body) < Pos('{"id":5}', R.Body), R.Body);
+  Check('newline-delimited (5 separators)',
+    OccurrenceCount(R.Body, #10) = 5, IntToStr(OccurrenceCount(R.Body, #10)));
+  { No chunk framing may appear in the body. If FUseChunked were ever wrongly
+    left on for HTTP/2, hex length prefixes and a "0" terminator would be
+    sitting in this string — and RFC 9113 §8.2.2 forbids them on the wire. }
+  Check('no chunked framing leaked into the body',
+    Pos('0'#13#10#13#10, R.Body) = 0, R.Body);
   R := DoRequest('GET', '/ping', nil, nil);
-  Check('server healthy after streaming probe',
+  Check('server healthy after streaming',
     (R.Status = 200) and (R.Body = 'pong'),
     Format('%d / %s', [R.Status, R.Body]));
 
   // ─── 34 ────────────────────────────────────────────────────────────────
-  Section('34  GET /stream/content-type  (nghttp2: 501)');
+  //  Proves the streamed path emits headers through the same response bridge
+  //  a buffered reply uses — a content-type set before SendStream survives.
+  Section('34  GET /stream/content-type  (declared type survives streaming)');
   R := DoRequest('GET', '/stream/content-type', nil, nil);
-  Check('status 501', R.Status = 501, IntToStr(R.Status));
-  Check('body contains "error" key', Pos('error', R.Body) > 0, R.Body);
-  R := DoRequest('GET', '/ping', nil, nil);
-  Check('server healthy after content-type stream probe',
-    (R.Status = 200) and (R.Body = 'pong'),
-    Format('%d / %s', [R.Status, R.Body]));
+  Check('status 200', R.Status = 200, IntToStr(R.Status));
+  Check('content-type is application/json',
+    Pos('application/json', LowerCase(HeaderValue(R.Response, 'content-type'))) > 0,
+    HeaderValue(R.Response, 'content-type'));
+  Check('body is the streamed record',
+    Pos('content-type-check', R.Body) > 0, R.Body);
+  { The security baseline is emitted by EmitHeaders, which both paths share.
+    Checking one of them here is what proves the streaming path really does
+    reuse the bridge rather than hand-rolling a header set. }
+  Check('security baseline present on streamed response',
+    SameText(HeaderValue(R.Response, 'x-content-type-options'), 'nosniff'),
+    HeaderValue(R.Response, 'x-content-type-options'));
 
   // ─── 35 ────────────────────────────────────────────────────────────────
-  Section('35  GET /stream/empty  (nghttp2: 501)');
+  //  A handler that writes nothing still owes the client a complete response.
+  //  Before STREAM-1's Close emitted headers on the way out, this case sent a
+  //  HEADERS frame that never arrived and the client saw a stream that opened
+  //  and closed with nothing in it.
+  Section('35  GET /stream/empty  (no writes — still a complete 200)');
   R := DoRequest('GET', '/stream/empty', nil, nil);
-  Check('status 501', R.Status = 501, IntToStr(R.Status));
-  Check('body contains "error" key', Pos('error', R.Body) > 0, R.Body);
+  Check('status 200', R.Status = 200, IntToStr(R.Status));
+  Check('body empty', R.Body = '', R.Body);
+  Check('content-type still declared',
+    Pos('x-ndjson', LowerCase(HeaderValue(R.Response, 'content-type'))) > 0,
+    HeaderValue(R.Response, 'content-type'));
   R := DoRequest('GET', '/ping', nil, nil);
-  Check('server healthy after empty stream probe',
+  Check('server healthy after empty stream',
     (R.Status = 200) and (R.Body = 'pong'),
     Format('%d / %s', [R.Status, R.Body]));
 
   // ─── 36 ────────────────────────────────────────────────────────────────
-  Section('36  GET /stream/pull ×2 concurrent  (nghttp2: both 501, healthy)');
+  //  Two streams at once. Each has its own buffer, lock and deferred flag, so
+  //  this is where a per-SESSION mistake — one shared resume flag, say —
+  //  would surface as one stream stalling or stealing the other's bytes.
+  Section('36  GET /stream/pull ×2 concurrent  (independent streams)');
   SetLength(LBatch,   2);
   SetLength(LThreads, 2);
   for I := 0 to 1 do
@@ -734,12 +794,41 @@ begin
   end;
   for I := 0 to 1 do LThreads[I].Start;
   for I := 0 to 1 do LBatch[I].Event.WaitFor(TIMEOUT_MS);
-  Check('both concurrent streaming probes: status 501',
-    (LBatch[0].Status = 501) and (LBatch[1].Status = 501),
+  Check('both concurrent streams: status 200',
+    (LBatch[0].Status = 200) and (LBatch[1].Status = 200),
     Format('%d, %d', [LBatch[0].Status, LBatch[1].Status]));
+  Check('both concurrent streams delivered all 5 records',
+    (OccurrenceCount(LBatch[0].Body, #10) = 5) and
+    (OccurrenceCount(LBatch[1].Body, #10) = 5),
+    Format('%d, %d', [OccurrenceCount(LBatch[0].Body, #10),
+                      OccurrenceCount(LBatch[1].Body, #10)]));
   for I := 0 to 1 do begin LThreads[I].Free; LBatch[I].Event.Free; end;
   R := DoRequest('GET', '/ping', nil, nil);
-  Check('server healthy after concurrent streaming probes',
+  Check('server healthy after concurrent streams',
+    (R.Status = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.Status, R.Body]));
+
+  // ─── 37 ────────────────────────────────────────────────────────────────
+  //  SSE. The server sleeps 60 ms between events, so this route also exercises
+  //  the case the whole DEFERRED/resume mechanism exists for: the data
+  //  provider runs dry between writes and must be re-armed. Without the resume
+  //  path this test hangs rather than fails — the first event arrives and
+  //  nothing follows.
+  Section('37  GET /stream/sse  (Server-Sent Events, paced writes)');
+  R := DoRequest('GET', '/stream/sse', nil, nil);
+  Check('status 200', R.Status = 200, IntToStr(R.Status));
+  Check('content-type is text/event-stream',
+    Pos('text/event-stream', LowerCase(HeaderValue(R.Response, 'content-type'))) > 0,
+    HeaderValue(R.Response, 'content-type'));
+  Check('5 SSE events delivered',
+    OccurrenceCount(R.Body, 'event: message') = 5,
+    IntToStr(OccurrenceCount(R.Body, 'event: message')));
+  Check('SSE record separator (blank line) present',
+    Pos(#10#10, R.Body) > 0, R.Body);
+  Check('last event survived the resume path',
+    Pos('{"id":5}', R.Body) > 0, R.Body);
+  R := DoRequest('GET', '/ping', nil, nil);
+  Check('server healthy after SSE',
     (R.Status = 200) and (R.Body = 'pong'),
     Format('%d / %s', [R.Status, R.Body]));
 end;

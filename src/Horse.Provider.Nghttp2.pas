@@ -258,7 +258,14 @@ uses
   Horse.Provider.Nghttp2.Request,
   Horse.Provider.Nghttp2.Response,
   Horse.Provider.Nghttp2.WebResponseAdapter,
+  Horse.Provider.Nghttp2.StreamWriter,      { STREAM-1: registers the Res.SendStream writer in its initialization }
   Horse.Provider.Nghttp2.Grpc.Dispatcher,   { M4a: intercept application/grpc* before Horse routing }
+  Horse.Provider.Nghttp2.Grpc.Registry,     { M6b: THorseGrpc.IsInboundStreaming — see ShouldStreamInboundTrampoline }
+{$IF DEFINED(FPC)}
+  StrUtils,          { StartsText }
+{$ELSE}
+  System.StrUtils,   { StartsText }
+{$IFEND}
   Nghttp2.Native;    { NghttpLoad + diagnostics — see InternalListen }
   { Nghttp2.Tls already in interface uses — TTlsServerContext is a class field }
 
@@ -276,6 +283,7 @@ end;
 // TNghttp2OnRequestProc. This trampoline is a plain procedure that matches
 // the type and forwards to the class method.
 procedure ExecutePipelineTrampoline(const AStream: INghttp2Stream); forward;
+function  ShouldStreamInboundTrampoline(const AStream: INghttp2Stream): Boolean; forward;
 
 // ============================================================================
 // THorseProviderNghttp2
@@ -492,6 +500,11 @@ begin
 
   FServer := TNghttp2Server.Create;
   FServer.OnRequest := ExecutePipelineTrampoline;
+  { INBOUND-1 / M6b. Asked once per request on HEADERS. Returning True routes
+    the body to the inbound queue AND moves dispatch to HEADERS, which is what
+    a client-streaming or bidi gRPC handler needs — it must run while the peer
+    is still sending. Every other path answers False and behaves as before. }
+  FServer.OnShouldStreamInbound := ShouldStreamInboundTrampoline;
   // Hand the TLS context to the server (or nil for h2c). The server holds a
   // non-owning reference — FTls stays owned by the provider until StopListen.
   FServer.TlsContext := FTls;
@@ -813,6 +826,25 @@ begin
     LStream.EndAsyncDispatch;
     Free;
   end;
+end;
+
+{ Connection-thread callback, once per request. Kept to a registry lookup:
+  anything expensive here is paid by every request on every connection, not
+  only by streaming ones. }
+function ShouldStreamInboundTrampoline(const AStream: INghttp2Stream): Boolean;
+var
+  LContentType: string;
+begin
+  Result := False;
+
+  { Cheapest discriminator first. Only gRPC traffic can be inbound-streaming,
+    and the content-type test is a string compare against a header already in
+    hand — no dictionary lookup for the overwhelming majority of requests. }
+  LContentType := AStream.Header['content-type'];
+  if not StartsText('application/grpc', LContentType) then Exit;
+
+  Result := THorseGrpc.IsInboundStreaming(AStream.Header[':path']);
+
 end;
 
 procedure ExecutePipelineTrampoline(const AStream: INghttp2Stream);

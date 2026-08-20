@@ -50,6 +50,7 @@ uses
   Horse.Commons,
   Horse.Exception,
   Horse.Exception.Interrupted,
+  Horse.Response,   { IHorseStreamWriter — the /stream/* routes (STREAM-1) }
   Horse.Provider.Nghttp2,
   { Linking this is what makes `eventloop` do anything — Nghttp2.Server holds
     only a function pointer and never names the unit. Unconditional on
@@ -441,13 +442,109 @@ begin
   Res.Send('shadow-wins');
 end;
 
-// ─── Streaming (not supported in nghttp2 v1 — return 501) ──────────────────
+// ─── Streaming — Web Streams (NDJSON) and SSE                     (STREAM-1) ─
+//
+//  These four routes replace the 501 stubs v1.0.0 shipped. On HTTP/2 there is
+//  no chunked framing to arrange: DATA frames carry their own length and the
+//  body ends when one arrives with END_STREAM, so `Transfer-Encoding: chunked`
+//  is not merely redundant but forbidden (RFC 9113 §8.2.2). Horse already
+//  knows this — THorseStreamWriterBase turns its chunk framing off when the
+//  request's ProtocolVersion is HTTP/2 — so a handler writes plain bytes and
+//  the transport frames them.
+//
+//  The writer callbacks are METHODS of a singleton rather than anonymous
+//  procedures: THorseStreamProc is `of object`, and FPC without
+//  FUNCTIONREFERENCES compiles no anonymous procs at all. A bound method is
+//  the one form both compilers accept.
+//
+//  Verify by hand with:
+//    curl --http2-prior-knowledge -N http://127.0.0.1:9010/stream/pull
+//  -N matters — without it curl buffers and the arrival PATTERN, which is the
+//  only thing distinguishing streaming from a slow single response, is lost.
 
-procedure StreamNotImplemented(Req: THorseRequest; Res: THorseResponse);
+type
+  TStreamRoutes = class
+    procedure Pull       (const AWriter: IHorseStreamWriter);
+    procedure ContentType(const AWriter: IHorseStreamWriter);
+    procedure Empty      (const AWriter: IHorseStreamWriter);
+    procedure Sse        (const AWriter: IHorseStreamWriter);
+  end;
+
+var
+  GStreamRoutes: TStreamRoutes;
+
+{ Five NDJSON records. IsConnected is checked before every write, not once up
+  front: the peer can vanish mid-loop, and on HTTP/2 that arrives as
+  RST_STREAM or GOAWAY rather than a socket error the write itself would
+  raise. A loop that ignores it runs to completion with nowhere to send. }
+procedure TStreamRoutes.Pull(const AWriter: IHorseStreamWriter);
+var
+  I: Integer;
 begin
-  Res.Status(501)
-     .ContentType('application/json; charset=utf-8')
-     .Send('{"error":"streaming not implemented in horse-provider-nghttp2 v1"}');
+  for I := 1 to 5 do
+  begin
+    if not AWriter.IsConnected then Break;
+    AWriter.Write(Format('{"id":%d}'#10, [I]));
+  end;
+end;
+
+{ Exists to prove the content-type the handler set survives to the wire. The
+  headers are emitted by the writer at first Write, from the same response
+  bridge a buffered reply uses — so if this passes, the two paths agree. }
+procedure TStreamRoutes.ContentType(const AWriter: IHorseStreamWriter);
+begin
+  if AWriter.IsConnected then
+    AWriter.Write('{"stream":"content-type-check"}'#10);
+end;
+
+{ Writes nothing at all. The client must still see a complete 200 with the
+  declared content-type and an empty body — NOT a stream that opened and
+  closed with no HEADERS frame. TNghttp2StreamWriter.Close is what guarantees
+  it, by emitting headers on the way out when the handler never did. }
+procedure TStreamRoutes.Empty(const AWriter: IHorseStreamWriter);
+begin
+  // Intentionally empty — see the comment above.
+end;
+
+{ Server-Sent Events. The `event:`/`data:`/blank-line shape is SSE's own
+  framing (W3C EventSource), independent of HTTP framing — it looks the same
+  on HTTP/1.1 and HTTP/2. Sleep(60) spaces the events so a reader can observe
+  them arriving separately instead of as one buffered blob. }
+procedure TStreamRoutes.Sse(const AWriter: IHorseStreamWriter);
+var
+  I: Integer;
+begin
+  for I := 1 to 5 do
+  begin
+    if not AWriter.IsConnected then Break;
+    AWriter.Write(Format('event: message'#10'data: {"id":%d}'#10#10, [I]));
+    Sleep(60);
+  end;
+end;
+
+procedure StreamPull(Req: THorseRequest; Res: THorseResponse);
+begin
+  Res.ContentType('application/x-ndjson; charset=utf-8');
+  Res.SendStream(GStreamRoutes.Pull);
+end;
+
+procedure StreamContentType(Req: THorseRequest; Res: THorseResponse);
+begin
+  Res.ContentType('application/json; charset=utf-8');
+  Res.SendStream(GStreamRoutes.ContentType);
+end;
+
+procedure StreamEmpty(Req: THorseRequest; Res: THorseResponse);
+begin
+  Res.ContentType('application/x-ndjson; charset=utf-8');
+  Res.SendStream(GStreamRoutes.Empty);
+end;
+
+procedure StreamSse(Req: THorseRequest; Res: THorseResponse);
+begin
+  Res.ContentType('text/event-stream; charset=utf-8');
+  Res.AddHeader('Cache-Control', 'no-cache');
+  Res.SendStream(GStreamRoutes.Sse);
 end;
 
 // ─── M2b: HTTP/2 trailers demo ─────────────────────────────────────────────
@@ -619,6 +716,9 @@ var
   I:         Integer;
 
 begin
+  { Holds the four streaming writer callbacks. A singleton because SendStream
+    wants a bound method and the routes are stateless — see TStreamRoutes. }
+  GStreamRoutes := TStreamRoutes.Create;
   try
     // Parse args. `tls` = plain TLS (server cert only); `mtls` = mTLS
     // (server cert + client cert required, signed by ca.pem). mtls implies tls.
@@ -823,9 +923,10 @@ begin
     THorse.Get   ('/compat/rawbody',             CompatRawBody);
 
     // ─── Streaming (501 — not implemented in v1) ───────────────────────────
-    THorse.Get   ('/stream/pull',                StreamNotImplemented);
-    THorse.Get   ('/stream/content-type',        StreamNotImplemented);
-    THorse.Get   ('/stream/empty',               StreamNotImplemented);
+    THorse.Get   ('/stream/pull',                StreamPull);
+    THorse.Get   ('/stream/content-type',        StreamContentType);
+    THorse.Get   ('/stream/empty',               StreamEmpty);
+    THorse.Get   ('/stream/sse',                 StreamSse);
 
     // ─── M2b: HTTP/2 trailer demo (gRPC-style grpc-status trailer) ─────────
     THorse.Get   ('/grpc-status-zero',           GrpcStatusZero);
@@ -888,4 +989,5 @@ begin
       ExitCode := 1;
     end;
   end;
+  GStreamRoutes.Free;
 end.

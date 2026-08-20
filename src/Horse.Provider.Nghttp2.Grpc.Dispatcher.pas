@@ -59,7 +59,9 @@ uses
 {$IFEND}
   Nghttp2.Protobuf,
   Nghttp2.Protobuf.Rtti,
-  Horse.Provider.Nghttp2.Grpc.Registry;
+  Horse.Provider.Nghttp2.Grpc.Registry,
+  Horse.Provider.Nghttp2.Grpc.StreamWriter,   { M6a — TGrpcStreamWriter }
+  Horse.Provider.Nghttp2.Grpc.StreamReader;   { M6b — TGrpcStreamReader }
 
 // ── 5-byte prefix framing ──────────────────────────────────────────────────
 
@@ -95,20 +97,11 @@ begin
   Result := True;
 end;
 
-function WrapGrpcPrefix(const AProtoBody: TBytes): TBytes;
-var
-  LLen: UInt32;
-begin
-  LLen := UInt32(Length(AProtoBody));
-  SetLength(Result, 5 + Integer(LLen));
-  Result[0] := 0;                          // compression flag = uncompressed
-  Result[1] := Byte((LLen shr 24) and $FF);
-  Result[2] := Byte((LLen shr 16) and $FF);
-  Result[3] := Byte((LLen shr 8) and $FF);
-  Result[4] := Byte( LLen        and $FF);
-  if LLen > 0 then
-    Move(AProtoBody[0], Result[5], LLen);
-end;
+{ Outbound framing lives in Horse.Provider.Nghttp2.Grpc.StreamWriter as
+  WrapGrpcMessage, and both the unary path below and the streaming writer call
+  that one function. It was duplicated here originally; a length-prefix defect
+  in one copy would have been invisible to whichever suite exercised the other,
+  and unary and streaming are covered by different tests. }
 
 // ── Body accumulation from the request stream ──────────────────────────────
 
@@ -164,6 +157,8 @@ var
   LRespObj:     TObject;
   LRespProto:   TBytes;
   LFramed:      TBytes;
+  LWriter:      IGrpcStreamWriter;   // M6a server-streaming
+  LReader:      IGrpcStreamReader;   // M6b client-streaming / bidi
 begin
   // 1. Content-type check — only intercept application/grpc*
   LContentType := AStream.Header['content-type'];
@@ -180,6 +175,70 @@ begin
   begin
     SendGrpcStatusOnly(AStream, GRPC_STATUS_UNIMPLEMENTED,
       'method not registered: ' + LPath);
+    Exit;
+  end;
+
+  { ── M6b inbound-streaming methods ──────────────────────────────────────
+    Handled before the body is touched, and necessarily so: this stream was
+    dispatched on HEADERS, so AStream.Body is empty and always will be — the
+    DATA is arriving into the inbound queue the reader drains. Falling through
+    to ReadStreamAsBytes would decode a zero-length body as a malformed frame. }
+  if LInfo.IsClientStream then
+  begin
+    AStream.StatusCode := 200;
+    AStream.Header['content-type'] := 'application/grpc';
+
+    LReader := TGrpcStreamReader.Create(AStream, LInfo.RequestClass);
+
+    if Assigned(LInfo.BidiHandler) then
+    begin
+      { Bidirectional — reading and writing are concurrent on one stream, so
+        the response side opens up front exactly as it does for M6a. }
+      AStream.BeginStreaming;
+      LWriter := TGrpcStreamWriter.Create(AStream, LInfo.ResponseClass);
+      try
+        try
+          LInfo.BidiHandler(LReader, LWriter);
+          AStream.AddTrailer('grpc-status',  '0');
+          AStream.AddTrailer('grpc-message', 'OK');
+        except
+          on E: Exception do
+          begin
+            AStream.AddTrailer('grpc-status',  IntToStr(GRPC_STATUS_INTERNAL));
+            AStream.AddTrailer('grpc-message', E.ClassName + ': ' + E.Message);
+          end;
+        end;
+      finally
+        AStream.EndStreaming;
+        LWriter := nil;
+        LReader := nil;
+      end;
+      Exit;
+    end;
+
+    { Client-streaming — many in, ONE out. The single response is buffered and
+      sent normally, so trailers may be added the ordinary way, before Send. }
+    LRespObj := LInfo.ResponseClass.Create;
+    try
+      try
+        LInfo.ClientHandler(LReader, LRespObj);
+        LRespProto := TProtoSerializer.Serialize(LRespObj);
+      except
+        on E: Exception do
+        begin
+          SendGrpcStatusOnly(AStream, GRPC_STATUS_INTERNAL,
+            E.ClassName + ': ' + E.Message);
+          Exit;
+        end;
+      end;
+    finally
+      LRespObj.Free;
+      LReader := nil;
+    end;
+
+    AStream.AddTrailer('grpc-status',  '0');
+    AStream.AddTrailer('grpc-message', 'OK');
+    AStream.Send(WrapGrpcMessage(LRespProto));
     Exit;
   end;
 
@@ -209,6 +268,50 @@ begin
             'protobuf decode: ' + E.Message);
           Exit;
         end;
+      end;
+
+      { ── M6a server-streaming ───────────────────────────────────────────
+        Returns from inside this branch: unlike the two unary paths below it
+        emits its own response entirely, because the status trailer cannot be
+        composed until the handler has finished producing.
+
+        Order matters and is not interchangeable. Headers and BeginStreaming
+        go first so the client sees a response immediately rather than after
+        the first message. Trailers go last, which is legal here only because
+        a streaming response reads its trailer list at EOF — see AddTrailer in
+        Nghttp2.Session.pas. }
+      if LInfo.IsServerStream then
+      begin
+        AStream.StatusCode := 200;
+        AStream.Header['content-type'] := 'application/grpc';
+        AStream.BeginStreaming;
+
+        LWriter := TGrpcStreamWriter.Create(AStream, LInfo.ResponseClass);
+        try
+          try
+            LInfo.StreamHandler(LReqObj, LWriter);
+            AStream.AddTrailer('grpc-status',  '0');
+            AStream.AddTrailer('grpc-message', 'OK');
+          except
+            on E: Exception do
+            begin
+              { Messages already sent have gone — a stream cannot be recalled.
+                Reporting the failure in the trailer is the whole mechanism
+                gRPC has for this, and it is why a streaming client must check
+                grpc-status after the last message rather than assuming that
+                receiving data means success. }
+              AStream.AddTrailer('grpc-status',  IntToStr(GRPC_STATUS_INTERNAL));
+              AStream.AddTrailer('grpc-message', E.ClassName + ': ' + E.Message);
+            end;
+          end;
+        finally
+          { EndStreaming inside the finally, so a handler that escapes by any
+            route still closes the stream. Without it the client waits on a
+            stream that will never carry END_STREAM. }
+          AStream.EndStreaming;
+          LWriter := nil;
+        end;
+        Exit;
       end;
 
       if Assigned(LInfo.InvokeMethod) then
@@ -291,7 +394,7 @@ begin
   end;
 
   // 5. Frame the response, set headers + status-0 trailer, send.
-  LFramed := WrapGrpcPrefix(LRespProto);
+  LFramed := WrapGrpcMessage(LRespProto);
   AStream.StatusCode := 200;
   AStream.Header['content-type'] := 'application/grpc';
   AStream.AddTrailer('grpc-status',  '0');

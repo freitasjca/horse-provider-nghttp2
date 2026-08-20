@@ -58,12 +58,98 @@ type
     Ownership: dispatcher frees the returned response. }
   TGrpcInvokeMethod = function(const ARequest: TObject): TObject of object;
 
+  { ── Server-streaming (M6a) ────────────────────────────────────────────────
+    One request in, many responses out, then a grpc-status trailer. The wire
+    shape is unchanged from unary — each message is still
+    `[compressed flag][4-byte length][payload]` — they simply concatenate in
+    the DATA stream instead of there being exactly one.
+
+    The handler is given a writer instead of a response object, because it
+    decides how many responses there are and when. }
+  IGrpcStreamWriter = interface
+    ['{7B1E4C93-6A2F-4D58-9E3B-8C5A0D1F2E64}']
+    { Serialises, gRPC-frames and queues one response message.
+
+      TAKES OWNERSHIP of AResponse and frees it — matching TGrpcInvokeMethod,
+      where the dispatcher frees what the callback returns. A streaming handler
+      allocates in a loop, so leaving ownership with the caller would make a
+      leak the default outcome rather than the exceptional one. }
+    procedure Send(const AResponse: TObject);
+
+    { False once the peer is gone (RST_STREAM, GOAWAY, dead connection). Check
+      it in the producing loop: on HTTP/2 a departed client does not surface as
+      a write error, so a loop that ignores this runs to completion with
+      nowhere to send. }
+    function IsConnected: Boolean;
+
+    { Messages handed to Send so far — for logging and tests. }
+    function Count: Integer;
+  end;
+
+  { Signature of a server-streaming gRPC handler.
+    - ARequest is a fresh populated instance; the dispatcher frees it.
+    - AWriter emits zero or more responses. Returning normally means success:
+      the dispatcher appends grpc-status 0. Raising means failure: the
+      dispatcher appends grpc-status 13 (INTERNAL) instead — note that any
+      messages already sent have gone, which is inherent to streaming and not
+      a defect. }
+  TGrpcServerStreamHandler = procedure(const ARequest: TObject;
+    const AWriter: IGrpcStreamWriter) of object;
+
+  { ── Client-streaming / bidirectional (M6b) ────────────────────────────────
+    Reads request messages as they arrive. Each is still
+    `[compressed flag][4-byte length][payload]`, but they are NOT aligned to
+    DATA frames — one frame may carry several messages, one message may span
+    several frames — so the reader reassembles rather than decoding per frame. }
+  IGrpcStreamReader = interface
+    ['{4D8A2F17-0C63-4B9E-A5D1-3E7F6B240C58}']
+    { Blocks until the next complete message arrives, then returns True with
+      AMessage populated. Returns False once the peer half-closes and the
+      buffer is drained — the normal way to end a read loop.
+
+      AMessage is OWNED BY THE READER and is only valid until the next call to
+      Next. Do not free it, and do not retain it across iterations; copy out
+      anything you need to keep. Reader-owned deliberately: a handler loops
+      over an unknown number of messages, so caller-frees would make leaking
+      the default outcome, and a caller-supplied buffer would carry stale
+      fields from the previous message into any field the next one omits. }
+    function Next(out AMessage: TObject): Boolean;
+
+    { Messages returned by Next so far. }
+    function Count: Integer;
+  end;
+
+  { Client-streaming: many requests in, ONE response out.
+    - AReader drains the request messages.
+    - AResponse is a fresh instance the dispatcher created and frees; the
+      handler populates it, exactly as in the unary procedural path. }
+  TGrpcClientStreamHandler = procedure(const AReader: IGrpcStreamReader;
+    const AResponse: TObject) of object;
+
+  { Bidirectional: many in, many out, concurrently on one stream.
+    Reading and writing are independent — a handler may interleave them
+    freely, and does not have to drain the reader before writing. }
+  TGrpcBidiStreamHandler = procedure(const AReader: IGrpcStreamReader;
+    const AWriter: IGrpcStreamWriter) of object;
+
   TGrpcMethodInfo = record
     Path:          string;
     RequestClass:  TClass;
     ResponseClass: TClass;
     Handler:       TGrpcHandler;       // set for procedural M4a path
     InvokeMethod:  TGrpcInvokeMethod;  // set for IInvokable M4c path (mutually exclusive with Handler)
+    StreamHandler: TGrpcServerStreamHandler;  // set for server-streaming M6a path
+    ClientHandler: TGrpcClientStreamHandler;  // set for client-streaming M6b path
+    BidiHandler:   TGrpcBidiStreamHandler;    // set for bidirectional  M6b path
+    { True when StreamHandler is the one to call. Kept as an explicit flag
+      rather than inferred from Assigned(StreamHandler) so the dispatcher's
+      branch reads as a declared property of the method, not as a side effect
+      of which field happens to be populated. }
+    IsServerStream: Boolean;
+    { True for client-streaming and bidi alike — both consume the request body
+      incrementally, which is what the transport needs to know. The dispatcher
+      then picks between them by which handler field is set. }
+    IsClientStream: Boolean;
   end;
 
   EHorseGrpcRegistry = class(Exception);
@@ -127,6 +213,41 @@ type
           '/users.UserService/GetUser',
           TUserRequest, TUserResponse,
           FUserServiceInstance.GetUser); }
+    { Registers a server-streaming method (M6a).
+
+        THorseGrpc.RegisterServerStream(
+          '/greeter.Greeter/ListGreetings',
+          TGreetRequest, TGreetReply,
+          GreeterImpl.ListGreetings);
+
+      Same path rules as RegisterMethod. AResponseClass is the type of EACH
+      streamed message, not of a wrapper. }
+    class procedure RegisterServerStream(
+      const APath:    string;
+      ARequestClass:  TClass;
+      AResponseClass: TClass;
+      AHandler:       TGrpcServerStreamHandler); static;
+
+    { Registers a client-streaming method (M6b): many requests in, one
+      response out. }
+    class procedure RegisterClientStream(
+      const APath:    string;
+      ARequestClass:  TClass;
+      AResponseClass: TClass;
+      AHandler:       TGrpcClientStreamHandler); static;
+
+    { Registers a bidirectional method (M6b): many in, many out, concurrent. }
+    class procedure RegisterBidiStream(
+      const APath:    string;
+      ARequestClass:  TClass;
+      AResponseClass: TClass;
+      AHandler:       TGrpcBidiStreamHandler); static;
+
+    { True when APath consumes its request body incrementally — client-stream
+      or bidi. Wired to the transport's OnShouldStreamInbound hook, which asks
+      once per request on HEADERS, so this must stay a cheap lookup. }
+    class function IsInboundStreaming(const APath: string): Boolean; static;
+
     class procedure RegisterMethod(
       const APath:      string;
       ARequestClass:    TClass;
@@ -290,11 +411,56 @@ begin
   LazyInit;
   FLock.Enter;
   try
-    LInfo.Path          := APath;
-    LInfo.RequestClass  := ARequestClass;
-    LInfo.ResponseClass := AResponseClass;
-    LInfo.Handler       := AHandler;
-    LInfo.InvokeMethod  := nil;
+    LInfo.Path           := APath;
+    LInfo.RequestClass   := ARequestClass;
+    LInfo.ResponseClass  := AResponseClass;
+    LInfo.Handler        := AHandler;
+    LInfo.InvokeMethod   := nil;
+    LInfo.StreamHandler  := nil;
+    LInfo.ClientHandler  := nil;
+    LInfo.BidiHandler    := nil;
+    LInfo.IsServerStream := False;
+    LInfo.IsClientStream := False;
+    InsertLocked(LInfo);
+  finally
+    FLock.Leave;
+  end;
+end;
+
+class procedure THorseGrpc.RegisterServerStream(
+  const APath:    string;
+  ARequestClass:  TClass;
+  AResponseClass: TClass;
+  AHandler:       TGrpcServerStreamHandler);
+var
+  LInfo: TGrpcMethodInfo;
+begin
+  if APath = '' then
+    raise EHorseGrpcRegistry.Create('RegisterServerStream: APath cannot be empty');
+  if (Length(APath) < 2) or (APath[1] <> '/') then
+    raise EHorseGrpcRegistry.CreateFmt(
+      'RegisterServerStream: APath %s must start with "/" and follow /<Service>/<Method> form',
+      [APath]);
+  if ARequestClass = nil then
+    raise EHorseGrpcRegistry.CreateFmt('RegisterServerStream(%s): ARequestClass is nil', [APath]);
+  if AResponseClass = nil then
+    raise EHorseGrpcRegistry.CreateFmt('RegisterServerStream(%s): AResponseClass is nil', [APath]);
+  if not Assigned(AHandler) then
+    raise EHorseGrpcRegistry.CreateFmt('RegisterServerStream(%s): AHandler is nil', [APath]);
+
+  LazyInit;
+  FLock.Enter;
+  try
+    LInfo.Path           := APath;
+    LInfo.RequestClass   := ARequestClass;
+    LInfo.ResponseClass  := AResponseClass;
+    LInfo.Handler        := nil;
+    LInfo.InvokeMethod   := nil;
+    LInfo.StreamHandler  := AHandler;
+    LInfo.ClientHandler  := nil;
+    LInfo.BidiHandler    := nil;
+    LInfo.IsServerStream := True;
+    LInfo.IsClientStream := False;
     InsertLocked(LInfo);
   finally
     FLock.Leave;
@@ -384,6 +550,14 @@ begin
     LInfo.ResponseClass := LRespClass;
     LInfo.Handler       := nil;
     LInfo.InvokeMethod  := LWrapper.Invoke;
+    { RegisterService<T> reflects unary methods only. A streaming RPC has no
+      natural IInvokable shape — its return is a sequence, not a value — so
+      those go through RegisterServerStream explicitly. }
+    LInfo.StreamHandler  := nil;
+    LInfo.ClientHandler  := nil;
+    LInfo.BidiHandler    := nil;
+    LInfo.IsServerStream := False;
+    LInfo.IsClientStream := False;
 
     FLock.Enter;
     try
@@ -392,6 +566,99 @@ begin
       FLock.Leave;
     end;
   end;
+end;
+
+
+{ Shared validation for the two M6b registrations — identical rules to
+  RegisterMethod, differing only in the handler that must be present. }
+procedure ValidateStreamPath(const AKind, APath: string;
+  ARequestClass, AResponseClass: TClass);
+begin
+  if APath = '' then
+    raise EHorseGrpcRegistry.CreateFmt('%s: APath cannot be empty', [AKind]);
+  if (Length(APath) < 2) or (APath[1] <> '/') then
+    raise EHorseGrpcRegistry.CreateFmt(
+      '%s: APath %s must start with "/" and follow /<Service>/<Method> form',
+      [AKind, APath]);
+  if ARequestClass = nil then
+    raise EHorseGrpcRegistry.CreateFmt('%s(%s): ARequestClass is nil', [AKind, APath]);
+  if AResponseClass = nil then
+    raise EHorseGrpcRegistry.CreateFmt('%s(%s): AResponseClass is nil', [AKind, APath]);
+end;
+
+class procedure THorseGrpc.RegisterClientStream(
+  const APath:    string;
+  ARequestClass:  TClass;
+  AResponseClass: TClass;
+  AHandler:       TGrpcClientStreamHandler);
+var
+  LInfo: TGrpcMethodInfo;
+begin
+  ValidateStreamPath('RegisterClientStream', APath, ARequestClass, AResponseClass);
+  if not Assigned(AHandler) then
+    raise EHorseGrpcRegistry.CreateFmt('RegisterClientStream(%s): AHandler is nil', [APath]);
+
+  LazyInit;
+  FLock.Enter;
+  try
+    LInfo.Path           := APath;
+    LInfo.RequestClass   := ARequestClass;
+    LInfo.ResponseClass  := AResponseClass;
+    LInfo.Handler        := nil;
+    LInfo.InvokeMethod   := nil;
+    LInfo.StreamHandler  := nil;
+    LInfo.ClientHandler  := AHandler;
+    LInfo.BidiHandler    := nil;
+    LInfo.IsServerStream := False;
+    LInfo.IsClientStream := True;
+    InsertLocked(LInfo);
+  finally
+    FLock.Leave;
+  end;
+end;
+
+class procedure THorseGrpc.RegisterBidiStream(
+  const APath:    string;
+  ARequestClass:  TClass;
+  AResponseClass: TClass;
+  AHandler:       TGrpcBidiStreamHandler);
+var
+  LInfo: TGrpcMethodInfo;
+begin
+  ValidateStreamPath('RegisterBidiStream', APath, ARequestClass, AResponseClass);
+  if not Assigned(AHandler) then
+    raise EHorseGrpcRegistry.CreateFmt('RegisterBidiStream(%s): AHandler is nil', [APath]);
+
+  LazyInit;
+  FLock.Enter;
+  try
+    LInfo.Path           := APath;
+    LInfo.RequestClass   := ARequestClass;
+    LInfo.ResponseClass  := AResponseClass;
+    LInfo.Handler        := nil;
+    LInfo.InvokeMethod   := nil;
+    LInfo.StreamHandler  := nil;
+    LInfo.ClientHandler  := nil;
+    LInfo.BidiHandler    := AHandler;
+    { Bidi is inbound-streaming AND outbound-streaming. Only the inbound half
+      concerns the transport hook — the outbound half is the handler's own
+      choice of when to call AWriter.Send. }
+    LInfo.IsServerStream := False;
+    LInfo.IsClientStream := True;
+    InsertLocked(LInfo);
+  finally
+    FLock.Leave;
+  end;
+end;
+
+class function THorseGrpc.IsInboundStreaming(const APath: string): Boolean;
+var
+  LInfo: TGrpcMethodInfo;
+begin
+  { Called on the connection thread for EVERY request, before dispatch. An
+    unregistered path answers False and takes the ordinary accumulate-then-
+    dispatch route, where the dispatcher will reply UNIMPLEMENTED as usual. }
+  Result := TryGet(APath, LInfo) and LInfo.IsClientStream;
 end;
 
 class function THorseGrpc.TryGet(const APath: string; out AInfo: TGrpcMethodInfo): Boolean;

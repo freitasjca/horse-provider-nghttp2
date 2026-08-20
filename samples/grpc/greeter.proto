@@ -12,6 +12,14 @@ package greeter;
 service Greeter {
   rpc Greet (GreetRequest) returns (GreetResponse);
   rpc Echo  (EchoRequest)  returns (EchoResponse);
+
+  // M6a — server-streaming. `stream` on the RESPONSE only: one request in,
+  // many responses out.
+  rpc ListGreetings (GreetRequest) returns (stream GreetResponse);
+
+  // M6b — `stream` on the request (client-streaming) and on both (bidi).
+  rpc JoinNames     (stream GreetRequest) returns (GreetResponse);
+  rpc ChatGreetings (stream GreetRequest) returns (stream GreetResponse);
 }
 
 message GreetRequest {

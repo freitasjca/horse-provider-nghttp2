@@ -28,9 +28,14 @@ All items marked **✓** ship in the v1.0.0 public release. Internal milestone l
 | `SheddedRequests` class counter — capacity signal (`OBSERV-1`) | **✓** |
 | **Event-loop I/O** — epoll (Linux) + IOCP (Windows), opt-in via `UseEventLoop` | **✓** (IOCP graceful shutdown under load to be re-validated) |
 | Password-protected private keys | implemented, untested — `SSLKeyPassword` reaches a wired `passwd_cb`, but no fixture uses an encrypted key |
-| gRPC — repeated fields (packed + LEN-per-element) | planned |
-| gRPC — streaming RPCs (server / client / bidi) | planned |
+| **Streaming / SSE** — `Res.SendStream`, Web Streams + Server-Sent Events | **✓** (STREAM-1 — see [streaming.md](streaming.md)) |
+| **gRPC — repeated fields** (packed numerics + LEN-per-element) | **✓** (M1c.2 — any `TArray<T>`; decoder accepts both wire forms; 75/75 on Delphi 12 + FPC 3.3.1) |
+| **gRPC — server-streaming RPCs** | **✓** (M6a — `RegisterServerStream`; 24/24 on FPC 3.3.1) |
+| **Incremental inbound transport** (INBOUND-1) | **✓ transport layer** — `ReadInbound` / `AppendInbound` / `MarkInboundEnded` on `INghttp2Stream`, plus `OnShouldStreamInbound` which moves dispatch from END_STREAM to HEADERS for opted-in streams. Regression-clean, and now exercised by M6b's client-streaming and bidi paths. |
+| **gRPC — client-streaming + bidirectional RPCs** | **✓** (M6b — `RegisterClientStream` / `RegisterBidiStream`; 35/35 on FPC 3.3.1) |
+| WebSocket over HTTP/2 (RFC 8441 extended CONNECT) | deferred — feasible, ~300–400 LOC; five of `IHorseWebSocketTransport`'s six methods already exist via STREAM-1, only inbound `Read` is missing — and INBOUND-1 now supplies `ReadInbound` for it to wrap. Held back on **client reach**, not effort: there is no HTTP/1.1 fallback here, so it is RFC 8441 or nothing — browsers support it, most non-browser clients and libraries do not, and proxy behaviour for extended CONNECT is untested. Would ship as "WebSocket, browsers only". |
+| gRPC — map fields, unsigned / ZigZag / fixed scalar variants | planned |
 | gRPC — `.proto` → `.pas` code generator | planned |
-| Streaming / SSE (replace current 501 stubs) | planned |
+| Streaming — producer backpressure (bounded buffer) | planned — see [streaming.md](streaming.md#backpressure) |
 
 Full plan: `plans/horse-provider-nghttp2.md` + `plans/horse-grpc-nghttp2.md` in the workspace root.

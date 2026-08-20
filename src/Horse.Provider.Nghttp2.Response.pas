@@ -32,10 +32,19 @@ uses
 type
   TNghttp2ResponseBridge = class
   public
-    class procedure Flush(
+    { Status line + every response header, with no body. Split out of Flush so
+      a streaming response can emit its headers up front and then produce a
+      body over time — see Horse.Provider.Nghttp2.StreamWriter (STREAM-1). }
+    class procedure EmitHeaders(
       const AHorseRes: THorseResponse;
       const AStream:   INghttp2Stream;
       const ABanner:   string       // Server-header value, '' → 'unknown'
+    ); static;
+
+    class procedure Flush(
+      const AHorseRes: THorseResponse;
+      const AStream:   INghttp2Stream;
+      const ABanner:   string
     ); static;
   end;
 
@@ -140,15 +149,13 @@ end;
 
 // ── Public entry point ────────────────────────────────────────────────────
 
-class procedure TNghttp2ResponseBridge.Flush(
+class procedure TNghttp2ResponseBridge.EmitHeaders(
   const AHorseRes: THorseResponse;
   const AStream:   INghttp2Stream;
   const ABanner:   string);
 var
   LStatus:      Integer;
   LContentType: string;
-  LBody:        string;
-  LBuf:         TBytes;
   I:            Integer;   // used by RawWebResponse.CustomHeaders + RepeatHeaders loops on both compilers
 {$IF NOT DEFINED(FPC)}
   LPair:        TPair<string, string>;
@@ -230,6 +237,28 @@ begin
     AStream.Header['server'] := StripCRLF(ABanner)
   else
     AStream.Header['server'] := 'unknown';
+end;
+
+class procedure TNghttp2ResponseBridge.Flush(
+  const AHorseRes: THorseResponse;
+  const AStream:   INghttp2Stream;
+  const ABanner:   string);
+var
+  LStatus: Integer;
+  LBody:   string;
+  LBuf:    TBytes;
+begin
+  { STREAM-1. A streaming response has already sent its headers and its body,
+    piece by piece, through the stream writer — the handler returned only after
+    the last chunk. Emitting anything here would submit a second response over
+    a stream nghttp2 considers answered. }
+  if AHorseRes.IsStreaming then Exit;
+
+  EmitHeaders(AHorseRes, AStream, ABanner);
+
+  LStatus := AHorseRes.Status;
+  if LStatus = 0 then
+    LStatus := 200;
 
   // ── Body ────────────────────────────────────────────────────────────────
   // Assigned() requires an lvalue; ContentStream is a property getter (rvalue).

@@ -61,6 +61,34 @@ samples\grpc\HorseNghttp2GrpcTestClient.exe
 
 See [doc/grpc.md](grpc.md) for TLS/mTLS variants and grpcurl usage.
 
+## Protobuf codec suite (75 checks)
+
+Lives in the Delphi-nghttp2 repo, not here — the codec is a dependency, not
+part of the provider.
+
+```bash
+cd patches/Delphi-nghttp2/tests
+bash build-codec-fpc.sh          # FPC/Linux
+```
+
+Windows builds it through the normal Delphi project.
+
+> **Never invoke `fpc` directly for this suite.** The distro compiler on Ubuntu
+> is FPC 3.2.2, a documented hard blocker: it has no `{$RTTI EXPLICIT}` and no
+> `TCustomAttribute`, so the attribute-driven serializer cannot compile. The
+> errors it produces (`Illegal compiler directive "$RTTI"`, `Identifier not
+> found "TCustomAttribute"`) name symptoms, not the cause. `build-codec-fpc.sh`
+> pins trunk 3.3.1 and refuses to run on 3.2.x with a message that says so.
+>
+> It also carries the full `-Fu` unit list. An incomplete one does not fail
+> cleanly — FPC falls back to the system path, loads a 3.2.2 `.ppu`, and
+> reports `PPU Invalid Version 207 expecting 208 / Can't find unit pthreads`,
+> which reads as a missing unit but is a wrong-compiler unit.
+
+Checks 09–11 cover repeated fields: round-trip across both wire families,
+byte-exact packed framing, and decoding of unpacked and fragmented input that
+our own encoder never produces.
+
 ## FPC / Linux — build-fpc.sh (12 stages)
 
 ```bash

@@ -28,7 +28,7 @@ Test:
 curl --http2 --insecure https://localhost:9443/ping
 ```
 
-On Windows, OpenSSL DLLs are also required — see [getting-nghttp2-windows.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-windows.md) § *Also needed: OpenSSL DLLs*.
+On Windows, OpenSSL DLLs are also required — `libssl-3-x64.dll` and `libcrypto-3-x64.dll`, or their 1.1.x equivalents. See [getting-nghttp2-windows.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-windows.md) § *Also needed: OpenSSL DLLs* for where to get them, and [deployment.md](deployment.md#what-to-ship) for the full per-platform shipping list.
 
 ## mTLS (client certificate required)
 

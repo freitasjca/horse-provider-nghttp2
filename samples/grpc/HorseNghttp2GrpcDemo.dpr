@@ -108,6 +108,21 @@ begin
           TEchoRequest, TEchoResponse, GreeterService.Echo);
     }
 
+    { M6a — server-streaming. Registered explicitly rather than through
+      RegisterService<T>: a streaming RPC returns a sequence, not a value, so
+      it has no natural IInvokable shape to reflect over. AResponseClass is the
+      type of EACH streamed message. }
+    THorseGrpc.RegisterServerStream('/greeter.Greeter/ListGreetings',
+      TGreetRequest, TGreetResponse, GreeterService.ListGreetings);
+
+    { M6b — the two inbound-streaming shapes. Registering either makes the
+      transport dispatch that path on HEADERS instead of END_STREAM, so the
+      handler runs while the peer is still sending. }
+    THorseGrpc.RegisterClientStream('/greeter.Greeter/JoinNames',
+      TGreetRequest, TGreetResponse, GreeterService.JoinNames);
+    THorseGrpc.RegisterBidiStream('/greeter.Greeter/ChatGreetings',
+      TGreetRequest, TGreetResponse, GreeterService.ChatGreetings);
+
     // Regular HTTP route — proves non-gRPC traffic still routes normally.
     THorse.Get('/', GetIndex);
 
@@ -147,17 +162,27 @@ begin
       WriteLn('HorseNghttp2GrpcDemo — h2c on port ', LPort);
     WriteLn('Registered gRPC methods: ', THorseGrpc.Count);
     WriteLn('Try (local):');
+    { grpcurl needs -import-path pointing at the SOURCE tree. The old hint
+      printed `-proto greeter.proto` with no path, which cannot resolve: this
+      binary is built into bin/<Platform>/<Config> while the .proto stays in
+      samples/grpc. grpcurl then reports
+        service "greeter.Greeter" does not include a method named "..."
+      which reads as a server fault and is in fact a client-side schema
+      mismatch — the server is never consulted about what it offers. }
     if LUseTls then
     begin
       WriteLn('  HorseNghttp2GrpcTestClient.exe https://127.0.0.1:', LPort);
-      WriteLn('  grpcurl -insecure -proto greeter.proto -d ''{"name":"World"}'' localhost:',
+      WriteLn('  grpcurl -insecure -import-path <repo>/horse-provider-nghttp2/samples/grpc \');
+      WriteLn('          -proto greeter.proto -d ''{"name":"World"}'' localhost:',
               LPort, ' greeter.Greeter/Greet');
     end
     else
     begin
       WriteLn('  HorseNghttp2GrpcTestClient.exe');
-      WriteLn('  grpcurl -plaintext -proto greeter.proto -d ''{"name":"World"}'' localhost:',
+      WriteLn('  grpcurl -plaintext -import-path <repo>/horse-provider-nghttp2/samples/grpc \');
+      WriteLn('          -proto greeter.proto -d ''{"name":"World"}'' localhost:',
               LPort, ' greeter.Greeter/Greet');
+      WriteLn('  ... same, ending greeter.Greeter/ListGreetings   (server-streaming, 5 msgs)');
     end;
     WriteLn('Ctrl-C to stop.');
 

@@ -11,6 +11,9 @@ program HorseNghttp2GrpcTestClient;
 //   01  Greet happy path                — protobuf → gRPC frame → wire → 5B strip → decode
 //   02  Echo all scalar types           — i32 / i64 / bool / string / f32 / f64 round-trip
 //   03  Unregistered method             — expects grpc-status 12 UNIMPLEMENTED trailer
+//   04  ListGreetings server-stream     — N frames on one stream, in order, then grpc-status
+//   05  JoinNames client-stream         — N messages in one body, server reassembles
+//   06  ChatGreetings bidirectional     — N in / N out, each echoing its own request
 //
 //  Trailer verification: nghttp2 delivers trailer HEADERS through the same
 //  on-header callback as initial headers, so TNghttp2Response.Headers ends
@@ -92,6 +95,51 @@ begin
     Move(AProto[0], Result[5], LLen);
 end;
 
+{ Splits a server-streaming body into its constituent gRPC messages.
+
+  GrpcStrip reads only the FIRST frame, which is all a unary response has. A
+  streamed body is N frames concatenated, so a test using GrpcStrip on it would
+  validate message 1 and silently ignore the rest — passing just as well
+  against a server that sent only one. Counting is most of the assertion here,
+  which is why this returns the whole set. }
+function GrpcSplit(const AData: TBytes; out AMsgs: TArray<TBytes>): Boolean;
+var
+  LPos:  Integer;
+  LLen:  UInt32;
+  LBody: TBytes;
+  LCount: Integer;
+begin
+  Result := False;
+  SetLength(AMsgs, 0);
+  LCount := 0;
+  LPos   := 0;
+
+  while LPos + 5 <= Length(AData) do
+  begin
+    if AData[LPos] <> 0 then Exit;            // compressed — not supported here
+    LLen := (UInt32(AData[LPos + 1]) shl 24) or
+            (UInt32(AData[LPos + 2]) shl 16) or
+            (UInt32(AData[LPos + 3]) shl 8)  or
+             UInt32(AData[LPos + 4]);
+    if LPos + 5 + Integer(LLen) > Length(AData) then Exit;   // truncated frame
+
+    SetLength(LBody, LLen);
+    if LLen > 0 then
+      Move(AData[LPos + 5], LBody[0], LLen);
+
+    Inc(LCount);
+    SetLength(AMsgs, LCount);
+    AMsgs[LCount - 1] := LBody;
+
+    Inc(LPos, 5 + Integer(LLen));
+  end;
+
+  { Trailing bytes that do not form a complete frame mean the body is
+    malformed, not merely short — report it rather than returning a partial
+    set that looks like a clean parse. }
+  Result := LPos = Length(AData);
+end;
+
 function GrpcStrip(const AData: TBytes; out AProto: TBytes): Boolean;
 var
   LLen: UInt32;
@@ -109,6 +157,48 @@ begin
   if LLen > 0 then
     Move(AData[5], AProto[0], LLen);
   Result := True;
+end;
+
+{ Builds a request body of N concatenated gRPC messages — the wire shape of a
+  client-streaming call.
+
+  TNghttp2Client sends one body per request, so this cannot pace the messages
+  the way a real streaming client would. What it DOES exercise is the server
+  reader's reassembly: several messages land in one DATA burst, which is
+  exactly the case a decoder that assumes one message per frame gets wrong.
+  Incremental arrival is grpcurl's job — see doc/grpc.md. }
+function GrpcWrapMany(const AReqs: array of TObject): TBytes;
+var
+  I:      Integer;
+  LOne:   TBytes;
+  LTotal: Integer;
+begin
+  SetLength(Result, 0);
+  LTotal := 0;
+  for I := 0 to High(AReqs) do
+  begin
+    LOne := GrpcWrap(TProtoSerializer.Serialize(AReqs[I]));
+    SetLength(Result, LTotal + Length(LOne));
+    Move(LOne[0], Result[LTotal], Length(LOne));
+    Inc(LTotal, Length(LOne));
+  end;
+end;
+
+function GrpcSubmitRaw(
+  const AClient: TNghttp2Client;
+  const APath:   string;
+  const ABody:   TBytes): TNghttp2Response;
+var
+  LHeaders: TNghttp2Headers;
+begin
+  SetLength(LHeaders, 3);
+  LHeaders[0].Name  := 'content-type';
+  LHeaders[0].Value := 'application/grpc+proto';
+  LHeaders[1].Name  := 'te';
+  LHeaders[1].Value := 'trailers';
+  LHeaders[2].Name  := 'grpc-encoding';
+  LHeaders[2].Value := 'identity';
+  Result := AClient.SubmitRequest('POST', APath, LHeaders, ABody);
 end;
 
 function GrpcSubmit(
@@ -235,6 +325,182 @@ begin
   finally
     LResp.Free;
   end;
+end;
+
+{ M6a — server-streaming.
+
+  Three things are asserted that a unary test cannot reach: that MANY frames
+  arrive on one stream, that they arrive in order, and that grpc-status still
+  lands in the trailer after the last of them. The status check is the one
+  most easily forgotten — a streaming client that stops reading when messages
+  stop will never see it, and a failed stream is indistinguishable from a
+  short one without it. }
+procedure TestServerStream(const AClient: TNghttp2Client);
+var
+  LReq:   TGreetRequest;
+  LResp:  TGreetResponse;
+  LRs:    TNghttp2Response;
+  LMsgs:  TArray<TBytes>;
+  LStat:  string;
+  I:      Integer;
+  LOk:    Boolean;
+  LTexts: TArray<string>;
+begin
+  WriteLn;
+  WriteLn('── 04  ListGreetings  (server-streaming, 5 messages)');
+  LReq := TGreetRequest.Create;
+  try
+    LReq.name := 'World';
+    LRs := GrpcSubmit(AClient, '/greeter.Greeter/ListGreetings', LReq);
+  finally
+    LReq.Free;
+  end;
+
+  Check(LRs.Status = 200,
+        Format('HTTP :status = 200 (got %d)', [LRs.Status]));
+  Check(SameText(FindHeader(LRs, 'content-type'), 'application/grpc'),
+        'content-type = application/grpc');
+
+  Check(GrpcSplit(LRs.Body, LMsgs),
+        'response body is a clean sequence of 5-byte-prefixed frames');
+  Check(Length(LMsgs) = 5,
+        Format('5 streamed messages (got %d)', [Length(LMsgs)]));
+
+  SetLength(LTexts, Length(LMsgs));
+  LOk := True;
+  for I := 0 to High(LMsgs) do
+  begin
+    LResp := TGreetResponse.Create;
+    try
+      try
+        TProtoSerializer.Deserialize(LMsgs[I], LResp);
+        LTexts[I] := LResp.text;
+      except
+        LOk := False;
+      end;
+    finally
+      LResp.Free;
+    end;
+  end;
+  Check(LOk, 'every streamed message decodes as TGreetResponse');
+
+  if Length(LTexts) = 5 then
+  begin
+    Check(Pos('World', LTexts[0]) > 0,
+          Format('message 1 carries the request name (got "%s")', [LTexts[0]]));
+    { Ordering matters: the writer appends into a buffer the data provider
+      drains on another thread, so a locking mistake shows up here as
+      out-of-order or interleaved messages rather than as a crash. }
+    LOk := True;
+    for I := 0 to 4 do
+      LOk := LOk and (Pos(Format('(%d of 5)', [I + 1]), LTexts[I]) > 0);
+    Check(LOk, 'messages arrive in order 1..5');
+  end;
+
+  LStat := FindHeader(LRs, 'grpc-status');
+  Check(LStat = '0',
+        Format('grpc-status trailer = 0 AFTER the last message (got "%s")', [LStat]));
+end;
+
+
+{ M6b — client-streaming. Three names in, one joined greeting out.
+
+  The reassembly assertion is the point: all three messages arrive in a single
+  DATA burst, so a reader that decoded per frame would see one message and
+  report a count of 1. Checking the echoed count catches that directly. }
+procedure TestClientStream(const AClient: TNghttp2Client);
+var
+  LReqs:  array[0..2] of TObject;
+  LRs:    TNghttp2Response;
+  LProto: TBytes;
+  LResp:  TGreetResponse;
+  LStat:  string;
+  I:      Integer;
+begin
+  WriteLn;
+  WriteLn('── 05  JoinNames  (client-streaming, 3 messages in)');
+
+  for I := 0 to 2 do
+  begin
+    LReqs[I] := TGreetRequest.Create;
+    TGreetRequest(LReqs[I]).name := Format('Name%d', [I + 1]);
+  end;
+  try
+    LRs := GrpcSubmitRaw(AClient, '/greeter.Greeter/JoinNames',
+                         GrpcWrapMany(LReqs));
+  finally
+    for I := 0 to 2 do LReqs[I].Free;
+  end;
+
+  Check(LRs.Status = 200, Format('HTTP :status = 200 (got %d)', [LRs.Status]));
+  LStat := FindHeader(LRs, 'grpc-status');
+  Check(LStat = '0', Format('grpc-status trailer = 0 (got "%s")', [LStat]));
+
+  Check(GrpcStrip(LRs.Body, LProto), 'single response frame');
+  if Length(LProto) > 0 then
+  begin
+    LResp := TGreetResponse.Create;
+    try
+      TProtoSerializer.Deserialize(LProto, LResp);
+      Check(Pos('Name1', LResp.text) > 0, 'first name present');
+      Check(Pos('Name3', LResp.text) > 0, 'last name present');
+      Check(Pos('(3 received)', LResp.text) > 0,
+        Format('server read all 3 messages — reassembly (got "%s")', [LResp.text]));
+    finally
+      LResp.Free;
+    end;
+  end
+  else
+    Check(False, 'response has non-empty payload');
+end;
+
+{ M6b — bidirectional. N in, N out on one stream. }
+procedure TestBidiStream(const AClient: TNghttp2Client);
+var
+  LReqs:  array[0..2] of TObject;
+  LRs:    TNghttp2Response;
+  LMsgs:  TArray<TBytes>;
+  LResp:  TGreetResponse;
+  LStat:  string;
+  I:      Integer;
+  LOk:    Boolean;
+begin
+  WriteLn;
+  WriteLn('── 06  ChatGreetings  (bidirectional, 3 in / 3 out)');
+
+  for I := 0 to 2 do
+  begin
+    LReqs[I] := TGreetRequest.Create;
+    TGreetRequest(LReqs[I]).name := Format('Peer%d', [I + 1]);
+  end;
+  try
+    LRs := GrpcSubmitRaw(AClient, '/greeter.Greeter/ChatGreetings',
+                         GrpcWrapMany(LReqs));
+  finally
+    for I := 0 to 2 do LReqs[I].Free;
+  end;
+
+  Check(LRs.Status = 200, Format('HTTP :status = 200 (got %d)', [LRs.Status]));
+  Check(GrpcSplit(LRs.Body, LMsgs), 'response is a clean frame sequence');
+  Check(Length(LMsgs) = 3,
+    Format('one response per request — 3 (got %d)', [Length(LMsgs)]));
+
+  LOk := Length(LMsgs) = 3;
+  if LOk then
+    for I := 0 to High(LMsgs) do
+    begin
+      LResp := TGreetResponse.Create;
+      try
+        TProtoSerializer.Deserialize(LMsgs[I], LResp);
+        LOk := LOk and (Pos(Format('Peer%d', [I + 1]), LResp.text) > 0);
+      finally
+        LResp.Free;
+      end;
+    end;
+  Check(LOk, 'each response echoes its own request, in order');
+
+  LStat := FindHeader(LRs, 'grpc-status');
+  Check(LStat = '0', Format('grpc-status trailer = 0 (got "%s")', [LStat]));
 end;
 
 procedure TestUnimplemented(const AClient: TNghttp2Client);
@@ -370,6 +636,9 @@ begin
       TestGreet(LClient);
       TestEcho(LClient);
       TestUnimplemented(LClient);
+      TestServerStream(LClient);   { M6a }
+      TestClientStream(LClient);   { M6b }
+      TestBidiStream(LClient);     { M6b }
     finally
       LClient.Free;
       if GTls <> nil then

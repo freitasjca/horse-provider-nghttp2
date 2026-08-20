@@ -81,3 +81,7 @@ __recovery/
 *.dsk
 *.dproj.local
 *.dsv
+scripts/InstallationLog.txt
+scripts/command.txt
+scripts/output.txt
+*:Zone.Identifier
