@@ -57,6 +57,7 @@ uses
     only a function pointer and never names the unit. Unconditional on
     purpose: on Windows and macOS it compiles to an empty unit, so it costs
     nothing and there is no platform branch to get wrong here. }
+  Nghttp2.Compat,        { Nghttp2CpuCount — TThread.ProcessorCount reports 1 on FPC 3.2.2 }
   Nghttp2.Engine.Epoll,
   { The two engines are mutually exclusive BY PLATFORM, not by configuration:
     each compiles to an empty unit off its own OS, so exactly one of them
@@ -923,7 +924,7 @@ begin
     else if LWorkers > 0 then
       WriteLn('Dispatch:      worker pool, ', LWorkers, ' threads (pinned)')
     else
-      WriteLn('Dispatch:      worker pool, ', TThread.ProcessorCount,
+      WriteLn('Dispatch:      worker pool, ', Nghttp2CpuCount,
               ' threads (auto: one per core)');
     { Same reason the dispatch line prints a resolved number: `eventloop` is a
       REQUEST, not a guarantee — on Windows, or without Nghttp2.Engine.Epoll
@@ -936,7 +937,7 @@ begin
       if LLoops > 0 then
         WriteLn('               loops=', LLoops, ' (pinned)')
       else
-        WriteLn('               loops=', TThread.ProcessorCount, ' (auto: one per core)');
+        WriteLn('               loops=', Nghttp2CpuCount, ' (auto: one per core)');
     end
     else
       WriteLn('Driver:        thread per connection (default)');

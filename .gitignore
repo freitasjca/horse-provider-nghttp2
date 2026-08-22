@@ -85,3 +85,8 @@ scripts/InstallationLog.txt
 scripts/command.txt
 scripts/output.txt
 *:Zone.Identifier
+
+# FPC build output / test venv
+samples/tests/.venv/
+samples/grpc/HorseNghttp2GrpcDemo
+samples/grpc/HorseNghttp2GrpcTestClient

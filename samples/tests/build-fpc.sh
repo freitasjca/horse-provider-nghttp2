@@ -103,17 +103,30 @@ echo "Units:  $TU"
 echo "Source: $DNG"
 echo "        $PROV"
 echo "        $HORSE"
-# 3.2.2 lacks TCustomAttribute in Rtti, which the gRPC registry needs. Plain
-# HTTP/2 is documented to work on 3.2.2, so this is a warning rather than a
-# hard stop — but an attribute-related error below means this is why.
+# FPC 3.2.2's Rtti unit declares no TCustomAttribute, so the gRPC/protobuf
+# layer cannot compile there. The HTTP/2 transport can and does — VERIFIED
+# 2026-08-22, stages 1/2/4 green on 3.2.2 — so rather than refusing the
+# compiler we build it without gRPC and say so.
+#
+# This is what lets Horse's own CI compile the provider: that workflow installs
+# the compiler with `apt-get install -y fpc`, which is 3.2.2.
+GRPC_DEFINE="-dHORSE_NGHTTP2_NO_GRPC"
+GRPC_SUPPORTED=0
 case "$FPCVER" in
-  3.2.*) echo "WARN:   3.2.x — gRPC units need trunk 3.3.1; plain HTTP/2 should still build." ;;
+  3.2.*)
+    echo "NOTE:   3.2.x — building the HTTP/2 transport WITHOUT gRPC (needs trunk 3.3.1"
+    echo "        for TCustomAttribute). gRPC stages will report SKIP, not silence."
+    ;;
+  *)
+    GRPC_DEFINE=""
+    GRPC_SUPPORTED=1
+    ;;
 esac
 echo
 
 # -dHORSE_GRPC_NO_FFI: nothing here exercises gRPC dispatch, and the define
 # drops the ffi.manager dependency so the build does not also require libffi.
-FLAGS="-n -MDelphi -O1 -gl -dHORSE_PROVIDER_NGHTTP2 -dHORSE_GRPC_NO_FFI \
+FLAGS="-n -MDelphi -O1 -gl -dHORSE_PROVIDER_NGHTTP2 -dHORSE_GRPC_NO_FFI $GRPC_DEFINE \
   -Fu. -Fu$PROV -Fu$DNG -Fu$HORSE \
   -Fu$TU/rtl -Fu$TU/rtl-console -Fu$TU/rtl-objpas -Fu$TU/rtl-extra \
   -Fu$TU/rtl-generics -Fu$TU/fcl-base -Fu$TU/fcl-web -Fu$TU/fcl-json \
@@ -683,7 +696,13 @@ fi
 # HTTP stages use, where dropping ffi keeps the build free of libffi entirely.
 echo
 echo "── 11  gRPC over h2c ───────────────────────────────────────────────────"
-if [[ -z "$GRPC" || ! -f "$GRPC/HorseNghttp2GrpcDemo.dpr" ]]; then
+if [[ "$GRPC_SUPPORTED" -eq 0 ]]; then
+  # An explicit skip, not a silent one. A gRPC stage that quietly vanished on
+  # 3.2.2 would let the suite report green while testing nothing — the exact
+  # failure mode that let Horse's own TestWebSocketDataExchange skip itself on
+  # FPC for months while passing.
+  skip "FPC $FPCVER cannot build the gRPC layer — TCustomAttribute needs trunk 3.3.1"
+elif [[ -z "$GRPC" || ! -f "$GRPC/HorseNghttp2GrpcDemo.dpr" ]]; then
   skip "samples/grpc not found next to this directory"
 elif [[ ! -d "$TU/libffi" ]]; then
   skip "libffi units not in this FPC install ($TU/libffi)"

@@ -30,6 +30,7 @@ uses
 {$ELSE}
   System.SysUtils, System.Classes, System.SyncObjs, System.DateUtils,
 {$IFEND}
+  Nghttp2.Compat,   { TInterlocked shim for FPC < 3.3.1 — no-op elsewhere }
   Horse.Exception,
   Horse.Provider.Abstract,
   Horse.Provider.Config,
@@ -274,8 +275,14 @@ uses
   Horse.Provider.Nghttp2.Response,
   Horse.Provider.Nghttp2.WebResponseAdapter,
   Horse.Provider.Nghttp2.StreamWriter,      { STREAM-1: registers the Res.SendStream writer in its initialization }
+{$IF NOT DEFINED(HORSE_NGHTTP2_NO_GRPC)}
+  { FPC-322: the gRPC layer needs extended RTTI — TCustomAttribute, which FPC
+    3.2.2's Rtti unit does not declare. Define HORSE_NGHTTP2_NO_GRPC to compile
+    the HTTP/2 transport without it; everything else in this provider works
+    unchanged. Delphi and FPC trunk leave the define unset and lose nothing. }
   Horse.Provider.Nghttp2.Grpc.Dispatcher,   { M4a: intercept application/grpc* before Horse routing }
   Horse.Provider.Nghttp2.Grpc.Registry,     { M6b: THorseGrpc.IsInboundStreaming — see ShouldStreamInboundTrampoline }
+{$IFEND}
   Horse.Core.WebSocket,                     { WS-8441: THorseWebSocketUpgrader service key }
   Horse.Provider.Nghttp2.WebSocket,         { WS-8441: TNghttp2WebSocketUpgrader }
 {$IF DEFINED(FPC)}
@@ -318,7 +325,7 @@ begin
   // Auto: a quarter of the cores, so most threads keep draining sockets
   // while a minority absorb handlers. See MaxInlineFallback for the latency
   // measurement this ratio comes from.
-  Result := TThread.ProcessorCount div 4;
+  Result := Nghttp2CpuCount div 4;
   if Result < 1 then Result := 1;
 end;
 
@@ -417,8 +424,10 @@ begin
   // the Horse pipeline. Bypasses THorseContextPool + THorse.Execute entirely
   // for zero-overhead protobuf dispatch. Returns True when the request was
   // handled; False → fall through to normal Horse routing.
+{$IF NOT DEFINED(HORSE_NGHTTP2_NO_GRPC)}
   if THorseGrpcDispatcher.TryDispatch(AStream) then
     Exit;
+{$IFEND}
 
   LCtx := THorseContextPool.Instance.Acquire;
   try
@@ -621,7 +630,7 @@ begin
   else if AConfig.IoThreads > 0 then
     LNghttp2Config.WorkerThreads := AConfig.IoThreads
   else
-    LNghttp2Config.WorkerThreads := TThread.ProcessorCount;
+    LNghttp2Config.WorkerThreads := Nghttp2CpuCount;
 
   // Each connection costs a thread in this transport — unless the event loop
   // is driving, where it costs a descriptor and a pump — so the shared
@@ -886,7 +895,15 @@ begin
   LContentType := AStream.Header['content-type'];
   if not StartsText('application/grpc', LContentType) then Exit;
 
+{$IF DEFINED(HORSE_NGHTTP2_NO_GRPC)}
+  { Compiled without gRPC: nothing can be inbound-streaming past this point.
+    The WebSocket branch above already returned True where it applies, so this
+    only affects application/grpc traffic — which cannot be served anyway in
+    this configuration. }
+  Result := False;
+{$ELSE}
   Result := THorseGrpc.IsInboundStreaming(AStream.Header[':path']);
+{$IFEND}
 
 end;
 
