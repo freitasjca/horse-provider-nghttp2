@@ -79,6 +79,23 @@ begin
   // for the shadow-field TMethodType path.
   if SameText(Result, 'HEAD') then
     Result := 'GET';
+
+  { WS-8441 — same mechanism, same place. RFC 8441 §4 makes extended CONNECT
+    (CONNECT + :protocol) the HTTP/2 spelling of HTTP/1.1's `GET` +
+    `Upgrade: websocket`: same path, same intent, different wire form because
+    HTTP/2 has no upgrade. Horse has no mtConnect, so the router matches
+    nothing and answers a bare "Method Not Allowed" before any handler runs.
+
+    Rewriting in Nghttp2.Request.pas alone is NOT enough — that sets the
+    shadow TMethodType, which the router does not consult. This function is
+    what it reads. Both are set, mirroring the HEAD case above.
+
+    Plain CONNECT (no :protocol) is deliberately untouched: it stays a real
+    CONNECT, and Nghttp2.Request rejects it as 405 before reaching a route,
+    because honouring RFC 7540 §8.3 tunnelling would make this a forward
+    proxy. }
+  if SameText(Result, 'CONNECT') and (FStream.Header[':protocol'] <> '') then
+    Result := 'GET';
 end;
 
 function TNghttp2RawRequest.GetProtocolVersion: string;

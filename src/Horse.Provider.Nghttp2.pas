@@ -57,6 +57,8 @@ type
     // Dispatch-pool size override. See the WorkerThreads class property.
     class var FWorkerThreads: Integer;
     class var FUseEventLoop: Boolean;
+    { WS-8441 — see the EnableWebSocket class property. }
+    class var FEnableWebSocket: Boolean;
     class var FEngineThreads: Integer;
 
     { OBSERV-1 (2026-08-17). Load shedding used to leave no trace on the
@@ -155,6 +157,19 @@ type
       then stalls every other stream multiplexed on that connection, which is
       the whole reason the pool exists. }
     class property WorkerThreads: Integer read FWorkerThreads write FWorkerThreads;
+
+    { WS-8441. Set True before Listen to accept WebSocket-over-HTTP/2
+      (RFC 8441 extended CONNECT). Off by default, and deliberately so.
+
+      Turning it on advertises SETTINGS_ENABLE_CONNECT_PROTOCOL, which invites
+      conforming clients to attempt the upgrade. That is only a good trade if
+      your clients can use it: browsers implement RFC 8441, most non-browser
+      WebSocket libraries do not, and this provider has no HTTP/1.1 to fall
+      back to — for those clients it is "cannot connect", not "slower path".
+
+      Requires a worker pool (the default). The WebSocket read loop blocks for
+      the life of the connection, so one occupies one worker throughout. }
+    class property EnableWebSocket: Boolean read FEnableWebSocket write FEnableWebSocket;
 
     { How many requests this process has answered with 503 because the
       dispatch queue was full. Reset by Listen.
@@ -261,6 +276,8 @@ uses
   Horse.Provider.Nghttp2.StreamWriter,      { STREAM-1: registers the Res.SendStream writer in its initialization }
   Horse.Provider.Nghttp2.Grpc.Dispatcher,   { M4a: intercept application/grpc* before Horse routing }
   Horse.Provider.Nghttp2.Grpc.Registry,     { M6b: THorseGrpc.IsInboundStreaming — see ShouldStreamInboundTrampoline }
+  Horse.Core.WebSocket,                     { WS-8441: THorseWebSocketUpgrader service key }
+  Horse.Provider.Nghttp2.WebSocket,         { WS-8441: TNghttp2WebSocketUpgrader }
 {$IF DEFINED(FPC)}
   StrUtils,          { StartsText }
 {$ELSE}
@@ -412,6 +429,22 @@ begin
     // any middleware that calls Res.RawWebResponse.SetCustomHeader.
     LCtx.Response.SetCSRawWebResponse(TNghttp2WebResponse.Create(AStream));
 
+    { WS-8441. Res.UpgradeToWebSocket resolves its upgrader out of
+      Req.Services, so it must be registered before the route runs — the same
+      contract the Indy and socket providers satisfy.
+
+      Registered only for a stream that actually arrived as extended CONNECT.
+      Offering it on ordinary requests would let a route call
+      UpgradeToWebSocket on a stream the client never asked to upgrade, which
+      cannot work and would fail deep inside the read loop rather than at the
+      call. Without the upgrader present, Horse's own fail-fast answers 501,
+      which is the correct reply to "upgrade me" on a plain GET. }
+    if FEnableWebSocket
+       and SameText(AStream.Header[':method'], 'CONNECT')
+       and SameText(AStream.Header[':protocol'], 'websocket') then
+      LCtx.Request.Services.Add(THorseWebSocketUpgrader,
+        TNghttp2WebSocketUpgrader.Create(AStream), True);
+
     // ── Horse middleware/route pipeline ────────────────────────────────
     try
       THorse.Execute(LCtx.Request, LCtx.Response);
@@ -505,6 +538,7 @@ begin
     a client-streaming or bidi gRPC handler needs — it must run while the peer
     is still sending. Every other path answers False and behaves as before. }
   FServer.OnShouldStreamInbound := ShouldStreamInboundTrampoline;
+  FServer.EnableConnectProtocol := FEnableWebSocket;   { WS-8441 }
   // Hand the TLS context to the server (or nil for h2c). The server holds a
   // non-owning reference — FTls stays owned by the provider until StopListen.
   FServer.TlsContext := FTls;
@@ -837,9 +871,18 @@ var
 begin
   Result := False;
 
-  { Cheapest discriminator first. Only gRPC traffic can be inbound-streaming,
-    and the content-type test is a string compare against a header already in
-    hand — no dictionary lookup for the overwhelming majority of requests. }
+  { WS-8441 first: a WebSocket stream is inbound-streaming by definition — its
+    read loop consumes frames for the life of the connection, which END_STREAM
+    dispatch could never start. Identified by extended CONNECT carrying
+    :protocol, per RFC 8441 §4. }
+  if THorseProviderNghttp2.EnableWebSocket
+     and SameText(AStream.Header[':method'], 'CONNECT')
+     and SameText(AStream.Header[':protocol'], 'websocket') then
+    Exit(True);
+
+  { Otherwise only gRPC traffic can be inbound-streaming, and the content-type
+    test is a string compare against a header already in hand — no dictionary
+    lookup for the overwhelming majority of requests. }
   LContentType := AStream.Header['content-type'];
   if not StartsText('application/grpc', LContentType) then Exit;
 

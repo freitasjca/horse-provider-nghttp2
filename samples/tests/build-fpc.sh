@@ -39,6 +39,11 @@
 #   15  streaming arrives INCREMENTALLY (curl -N timing) — the one streaming
 #       property no Pascal client here can observe, because TNghttp2Client
 #       returns a completed response
+#   16  streaming producer backpressure — RSS stays bounded while a slow
+#       consumer reads a 64 MB flood
+#   17  WS-8441 SETTINGS_ENABLE_CONNECT_PROTOCOL actually reaches the wire
+#   18  WS-8441 end-to-end upgrade — the only check that performs one, via
+#       python3 + h2 (no C tool in this suite implements RFC 8441)
 #
 #  Stages 1-11 all exercise the thread-per-connection driver. Stage 12 is the
 #  only one that executes the epoll engine, and it fails rather than passes if
@@ -53,6 +58,8 @@
 #  Environment:
 #    TRUNK_FPC    path to the fpc binary   (default /usr/local/fpc-trunk/bin/fpc)
 #    TRUNK_UNITS  path to its unit tree    (default .../units/x86_64-linux)
+#    WS_PYTHON    interpreter carrying the `h2` package, for stage 18
+#                 (default: ./.venv/bin/python if present, else python3)
 #
 #  Exit code = number of failed stages. 0 = all good.
 # =============================================================================
@@ -73,8 +80,15 @@ COMPILE_ONLY=0
 
 PASS=0
 FAIL=0
+SKIP=0
 pass() { echo "  PASS  $1"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL  $1"; FAIL=$((FAIL+1)); }
+# Counted, not just printed. A skipped stage is not a failure, but it is also
+# not a pass — and a summary reading "26 passed, 0 failed" while the only check
+# covering a feature never ran is how something ships believed-tested. The
+# summary now names them; the exit code still ignores them, because a missing
+# optional tool is not a defect in the code under test.
+skip() { echo "  SKIP  $1"; SKIP=$((SKIP+1)); }
 
 # ── Toolchain check ──────────────────────────────────────────────────────────
 if [[ ! -x "$TRUNK" ]]; then
@@ -301,7 +315,7 @@ fi
 echo
 echo "── 6  graceful shutdown under load ─────────────────────────────────────"
 if ! command -v h2load > /dev/null 2>&1; then
-  echo "  SKIP  h2load not installed (apt install nghttp2-client)"
+  skip "h2load not installed (apt install nghttp2-client)"
 else
   stdbuf -o0 -e0 ./HorseNghttp2TestServer shutdown-after=3000 shutdown-timeout=10000 \
     < /dev/null > "$WORK/shutdown.log" 2>&1 &
@@ -453,9 +467,9 @@ fi
 echo
 echo "── 6b  graceful-shutdown delivery (single-connection shapes) ───────────"
 if [[ ! -x ./verify-drain-delivery.sh ]] && [[ ! -f ./verify-drain-delivery.sh ]]; then
-  echo "  SKIP  verify-drain-delivery.sh not present"
+  skip "verify-drain-delivery.sh not present"
 elif ! command -v nghttp > /dev/null 2>&1; then
-  echo "  SKIP  nghttp not installed (apt install nghttp2-client)"
+  skip "nghttp not installed (apt install nghttp2-client)"
 else
   # Stage 6's witnesses are never the first connection to finish, so they miss
   # this. These shapes are: 1 request, 4 concurrent on 4 connections, and 8
@@ -491,9 +505,9 @@ fi
 echo
 echo "── 7  connection-thread leak check ─────────────────────────────────────"
 if ! command -v h2load > /dev/null 2>&1; then
-  echo "  SKIP  h2load not installed (apt install nghttp2-client)"
+  skip "h2load not installed (apt install nghttp2-client)"
 elif ! wait_port_free "$PORT" 15; then
-  echo "  SKIP  port $PORT still bound after stage 6"
+  skip "port $PORT still bound after stage 6"
 else
   LEAK_ROUNDS=${LEAK_ROUNDS:-20}
   LEAK_CONNS=${LEAK_CONNS:-50}
@@ -556,9 +570,9 @@ fi
 echo
 echo "── 8  two-stage GOAWAY (RFC 9113 §6.8) ─────────────────────────────────"
 if ! command -v nghttp > /dev/null 2>&1; then
-  echo "  SKIP  nghttp not installed (apt install nghttp2-client)"
+  skip "nghttp not installed (apt install nghttp2-client)"
 elif ! wait_port_free "$PORT" 15; then
-  echo "  SKIP  port $PORT still bound after stage 7"
+  skip "port $PORT still bound after stage 7"
 else
   # The request must outlive the shutdown trigger, so the connection is live
   # when stage 1 arrives and still owed a response when stage 2 follows.
@@ -602,9 +616,9 @@ fi
 echo
 echo "── 9  94-check suite over TLS ──────────────────────────────────────────"
 if [[ ! -f tls/cert.pem || ! -f tls/key.pem ]]; then
-  echo "  SKIP  tls/cert.pem or tls/key.pem missing — run: bash gen-tls-cert.sh"
+  skip "tls/cert.pem or tls/key.pem missing — run: bash gen-tls-cert.sh"
 elif ! wait_port_free "$TLS_PORT" 15; then
-  echo "  SKIP  port $TLS_PORT still bound by:"
+  skip "port $TLS_PORT still bound by:"
   ss -ltnp 2>/dev/null | grep ":$TLS_PORT " | sed 's/^/        /'
   echo "        Nothing here binds it — clear it with: pkill -f HorseNghttp2TestServer"
 else
@@ -630,9 +644,9 @@ fi
 echo
 echo "── 10  94-check suite over mTLS (positive + negative) ──────────────────"
 if [[ ! -f tls/ca.pem || ! -f tls/client-cert.pem || ! -f tls/client-key.pem ]]; then
-  echo "  SKIP  tls/ca.pem or client cert/key missing — run: bash gen-tls-cert.sh"
+  skip "tls/ca.pem or client cert/key missing — run: bash gen-tls-cert.sh"
 elif ! wait_port_free "$TLS_PORT" 15; then
-  echo "  SKIP  port $TLS_PORT still bound by:"
+  skip "port $TLS_PORT still bound by:"
   ss -ltnp 2>/dev/null | grep ":$TLS_PORT " | sed 's/^/        /'
   echo "        Nothing here binds it — clear it with: pkill -f HorseNghttp2TestServer"
 else
@@ -670,12 +684,12 @@ fi
 echo
 echo "── 11  gRPC over h2c ───────────────────────────────────────────────────"
 if [[ -z "$GRPC" || ! -f "$GRPC/HorseNghttp2GrpcDemo.dpr" ]]; then
-  echo "  SKIP  samples/grpc not found next to this directory"
+  skip "samples/grpc not found next to this directory"
 elif [[ ! -d "$TU/libffi" ]]; then
-  echo "  SKIP  libffi units not in this FPC install ($TU/libffi)"
+  skip "libffi units not in this FPC install ($TU/libffi)"
   echo "        RegisterService<T> needs them; rebuild FPC with the libffi package."
 elif ! wait_port_free "$GRPC_PORT" 15; then
-  echo "  SKIP  port $GRPC_PORT still bound by:"
+  skip "port $GRPC_PORT still bound by:"
   ss -ltnp 2>/dev/null | grep ":$GRPC_PORT " | sed 's/^/        /'
   echo "        Clear it with: pkill -f HorseNghttp2GrpcDemo"
 else
@@ -750,7 +764,7 @@ fi
 echo
 echo "── 12  94-check suite via epoll event loop (h2c) ────────────────────────"
 if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
-  echo "  SKIP  test programs did not build"
+  skip "test programs did not build"
 elif ! require_port_free "$PORT"; then
   fail "event-loop suite (port $PORT occupied before we started)"
 else
@@ -809,11 +823,11 @@ fi
 echo
 echo "── 13  94-check suite over TLS via epoll event loop ─────────────────────"
 if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
-  echo "  SKIP  test programs did not build"
+  skip "test programs did not build"
 elif [[ ! -f tls/cert.pem || ! -f tls/key.pem ]]; then
-  echo "  SKIP  tls/cert.pem or tls/key.pem missing — run: bash gen-tls-cert.sh"
+  skip "tls/cert.pem or tls/key.pem missing — run: bash gen-tls-cert.sh"
 elif ! wait_port_free "$TLS_PORT" 15; then
-  echo "  SKIP  port $TLS_PORT still bound"
+  skip "port $TLS_PORT still bound"
 else
   stdbuf -o0 -e0 ./HorseNghttp2TestServer eventloop tls \
     < /dev/null > "$WORK/eventloop-tls.log" 2>&1 &
@@ -861,11 +875,11 @@ fi
 echo
 echo "── 14  94-check suite over mTLS via epoll event loop ────────────────────"
 if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
-  echo "  SKIP  test programs did not build"
+  skip "test programs did not build"
 elif [[ ! -f tls/ca.pem || ! -f tls/client-cert.pem || ! -f tls/client-key.pem ]]; then
-  echo "  SKIP  tls/ca.pem or client cert/key missing — run: bash gen-tls-cert.sh"
+  skip "tls/ca.pem or client cert/key missing — run: bash gen-tls-cert.sh"
 elif ! wait_port_free "$TLS_PORT" 15; then
-  echo "  SKIP  port $TLS_PORT still bound"
+  skip "port $TLS_PORT still bound"
 else
   stdbuf -o0 -e0 ./HorseNghttp2TestServer eventloop mtls \
     < /dev/null > "$WORK/eventloop-mtls.log" 2>&1 &
@@ -921,9 +935,9 @@ fi
 echo
 echo "── 15  streaming delivers incrementally (curl -N timing) ───────────────"
 if ! command -v curl >/dev/null 2>&1; then
-  echo "  SKIP  curl not installed — cannot observe frame arrival timing"
+  skip "curl not installed — cannot observe frame arrival timing"
 elif ! wait_port_free "$PORT" 15; then
-  echo "  SKIP  port $PORT still bound"
+  skip "port $PORT still bound"
 else
   stdbuf -o0 -e0 ./HorseNghttp2TestServer < /dev/null > "$WORK/stream-server.log" 2>&1 &
   SRV=$!
@@ -976,6 +990,168 @@ else
   wait_port_free "$PORT" 15 || true
 fi
 
+# ── 16 · streaming producer backpressure (BACKPRESSURE-1) ────────────────────
+# /stream/flood writes 64 MB as fast as it can, with no pacing. Before the
+# bound, PushStreamData appended and returned, so the outbound buffer grew to
+# hold whatever the handler produced ahead of the peer — 64 MB of backlog for
+# a client that reads slowly.
+#
+# The assertion has to be about MEMORY, not content: the client receives the
+# same 64 MB either way, so a body check passes in both worlds. What separates
+# them is the server's RSS while it happens.
+#
+# curl reads at its own pace, which is exactly the slow consumer this bounds.
 echo
-echo "Stages: $PASS passed, $FAIL failed"
+echo "── 16  streaming producer backpressure (RSS bound) ─────────────────────"
+if ! command -v curl >/dev/null 2>&1; then
+  skip "curl not installed"
+elif ! wait_port_free "$PORT" 15; then
+  skip "port $PORT still bound"
+else
+  stdbuf -o0 -e0 ./HorseNghttp2TestServer < /dev/null > "$WORK/bp-server.log" 2>&1 &
+  SRV=$!
+  SERVERS+=("$SRV")
+  sleep 0.8
+  if ! kill -0 "$SRV" 2>/dev/null; then
+    fail "backpressure server exited at startup"
+    tail -4 "$WORK/bp-server.log" | sed 's/^/    | /'
+  else
+    RSS_BEFORE=$(awk '/VmRSS/{print $2}' /proc/$SRV/status 2>/dev/null || echo 0)
+
+    # --limit-rate makes curl a deliberately slow consumer, which is what puts
+    # the producer under sustained backpressure rather than letting it win the
+    # race. -m caps the run: we do not need all 64 MB to observe the bound.
+    BYTES=$(curl -sN --http2-prior-knowledge --limit-rate 2M -m 8 \
+              "http://127.0.0.1:$PORT/stream/flood" 2>/dev/null | wc -c)
+
+    RSS_PEAK=$(awk '/VmHWM/{print $2}' /proc/$SRV/status 2>/dev/null || echo 0)
+    RSS_GROWTH=$(( RSS_PEAK - RSS_BEFORE ))
+
+    if [[ "$BYTES" -lt 1048576 ]]; then
+      fail "backpressure — only $BYTES bytes received; the route did not stream"
+    elif [[ "$RSS_PEAK" -eq 0 ]]; then
+      skip "/proc RSS unavailable — cannot measure the bound"
+    elif [[ "$RSS_GROWTH" -gt 65536 ]]; then
+      # 64 MB of growth would mean the whole flood buffered. The bound is 1 MB
+      # plus normal working set, so anything past 64 MB is the old behaviour.
+      fail "producer NOT bounded — peak RSS grew ${RSS_GROWTH} KB while streaming $BYTES bytes"
+    else
+      pass "producer bounded — streamed $BYTES bytes, peak RSS grew ${RSS_GROWTH} KB"
+    fi
+  fi
+  kill -TERM "$SRV" 2>/dev/null || true
+  wait "$SRV" 2>/dev/null || true
+  wait_port_free "$PORT" 15 || true
+fi
+
+# ── 17 · WS-8441 SETTINGS advertisement ──────────────────────────────────────
+# Narrow on purpose. This does NOT prove a WebSocket upgrade works — nothing in
+# this toolchain speaks RFC 8441, so end-to-end validation needs a browser or a
+# new client (see doc/websocket.md).
+#
+# What it DOES prove is the half that was nearly shipped broken:
+# SETTINGS_ENABLE_CONNECT_PROTOCOL is flushed inside the session CONSTRUCTOR,
+# so an implementation that sets the flag afterwards compiles, reads back
+# True, and silently never advertises. No client would ever attempt an
+# upgrade, and the symptom would look like a client-compatibility problem
+# rather than a server bug. One frame-trace assertion closes that off.
+#
+# SETTINGS id 8 = ENABLE_CONNECT_PROTOCOL (RFC 8441 §3).
+echo
+echo "── 17  WS-8441 SETTINGS_ENABLE_CONNECT_PROTOCOL advertised ─────────────"
+if ! command -v nghttp > /dev/null 2>&1; then
+  skip "nghttp not installed (apt install nghttp2-client)"
+elif ! wait_port_free "$PORT" 15; then
+  skip "port $PORT still bound"
+else
+  stdbuf -o0 -e0 ./HorseNghttp2TestServer < /dev/null > "$WORK/ws-server.log" 2>&1 &
+  SRV=$!
+  SERVERS+=("$SRV")
+  sleep 0.8
+  if ! kill -0 "$SRV" 2>/dev/null; then
+    fail "WS settings check — server exited at startup"
+    tail -4 "$WORK/ws-server.log" | sed 's/^/    | /'
+  else
+    timeout 20 nghttp -v "http://127.0.0.1:$PORT/ping" > "$WORK/ws-settings.log" 2>&1 || true
+
+    # nghttp -v prints each SETTINGS entry on its own line, e.g.
+    #   [id=8:ENABLE_CONNECT_PROTOCOL(0x08):1]
+    # Match on the id rather than the name: older nghttp builds print the
+    # numeric id with no symbolic name, and a name-only grep would then report
+    # a missing setting that is present.
+    if grep -qE 'SETTINGS_ENABLE_CONNECT_PROTOCOL|id=8[:)]|ENABLE_CONNECT_PROTOCOL' "$WORK/ws-settings.log"; then
+      pass "ENABLE_CONNECT_PROTOCOL advertised when EnableWebSocket is on"
+    else
+      echo "    SETTINGS frames seen:"
+      grep -iE 'SETTINGS|id=' "$WORK/ws-settings.log" | head -8 | sed 's/^/      /'
+      fail "ENABLE_CONNECT_PROTOCOL absent — the flag never reached the SETTINGS frame"
+    fi
+  fi
+  kill -TERM "$SRV" 2>/dev/null || true
+  wait "$SRV" 2>/dev/null || true
+  wait_port_free "$PORT" 15 || true
+fi
+
+# ── 18 · WS-8441 end-to-end upgrade ──────────────────────────────────────────
+# The only check here that actually performs a WebSocket upgrade. Stage 17
+# proves the setting reaches the wire; this proves a client can act on it.
+#
+# Python rather than Pascal because nothing in the C toolchain speaks RFC 8441
+# — curl, nghttp and h2load all implement HTTP/2 without it — and
+# TNghttp2Client has no extended CONNECT. `h2` also makes this an INDEPENDENT
+# implementation, which matters for the same reason grpcurl does on the gRPC
+# side: our Pascal client encodes with the codec it decodes with, so a
+# symmetric framing bug passes it and fails everyone else.
+echo
+echo "── 18  WS-8441 WebSocket upgrade (python + h2) ─────────────────────────"
+# WS_PYTHON lets a multi-version setup name the interpreter that actually has
+# h2, rather than this stage assuming bare `python3` is the right one. With
+# pyenv or uv the interpreter carrying h2 is usually a venv, not the system
+# python, so guessing here would skip a stage that could have run.
+#   WS_PYTHON=.venv/bin/python bash build-fpc.sh
+# A local .venv is picked up automatically, which covers the common case.
+if [[ -z "${WS_PYTHON:-}" && -x .venv/bin/python ]]; then
+  WS_PYTHON=.venv/bin/python
+fi
+WS_PYTHON=${WS_PYTHON:-python3}
+
+if ! command -v "$WS_PYTHON" > /dev/null 2>&1 && [[ ! -x "$WS_PYTHON" ]]; then
+  skip "python not found at '$WS_PYTHON' — set WS_PYTHON=/path/to/python"
+elif ! "$WS_PYTHON" -c "import h2" 2>/dev/null; then
+  skip "h2 not installed for $WS_PYTHON"
+  echo "        uv:    uv venv .venv && uv pip install --python .venv/bin/python h2"
+  echo "        pip:   python3 -m venv .venv && .venv/bin/pip install h2"
+  echo "        then:  WS_PYTHON=.venv/bin/python bash build-fpc.sh"
+elif ! wait_port_free "$PORT" 15; then
+  skip "port $PORT still bound"
+else
+  stdbuf -o0 -e0 ./HorseNghttp2TestServer < /dev/null > "$WORK/ws-e2e-server.log" 2>&1 &
+  SRV=$!
+  SERVERS+=("$SRV")
+  sleep 0.8
+  if ! kill -0 "$SRV" 2>/dev/null; then
+    fail "WS upgrade — server exited at startup"
+    tail -4 "$WORK/ws-e2e-server.log" | sed 's/^/    | /'
+  else
+    if timeout 30 "$WS_PYTHON" ws8441_check.py 127.0.0.1 "$PORT" /ws \
+         2>&1 | tee "$WORK/ws-e2e.log" | sed 's/^/    /'; then
+      pass "WebSocket upgrade end-to-end (RFC 8441)"
+    else
+      fail "WebSocket upgrade end-to-end (RFC 8441)"
+      echo "    ── server log tail ──"
+      tail -6 "$WORK/ws-e2e-server.log" | sed 's/^/      /'
+    fi
+  fi
+  kill -TERM "$SRV" 2>/dev/null || true
+  wait "$SRV" 2>/dev/null || true
+  wait_port_free "$PORT" 15 || true
+fi
+
+echo
+if [[ $SKIP -gt 0 ]]; then
+  echo "Stages: $PASS passed, $FAIL failed, $SKIP skipped"
+  echo "        ── skipped stages verified nothing; see the SKIP lines above"
+else
+  echo "Stages: $PASS passed, $FAIL failed"
+fi
 exit $FAIL

@@ -80,18 +80,49 @@ begin
 
   // ── Validation ──────────────────────────────────────────────────────────
 
-  // (1) Method must be present and not TRACE/CONNECT.
-  //     HTTP/2 CONNECT has extended semantics (RFC 8441 WebSocket-over-HTTP/2);
-  //     out of scope for v1.
+  // (1) Method must be present, and not TRACE.
   if LMethod = '' then
   begin
     ARejectReason := 'Missing :method pseudo-header';
     Exit(rvBadRequest);
   end;
-  if SameText(LMethod, 'TRACE') or SameText(LMethod, 'CONNECT') then
+  if SameText(LMethod, 'TRACE') then
   begin
     ARejectReason := 'Method not allowed: ' + LMethod;
     Exit(rvMethodNotAllowed);
+  end;
+
+  { CONNECT is allowed only in its EXTENDED form (RFC 8441 §4) — carrying a
+    :protocol pseudo-header, which is how WebSocket-over-HTTP/2 opens a
+    stream. Plain CONNECT is the tunnelling form from RFC 7540 §8.3 and stays
+    refused: this is an origin server, not a forward proxy, and honouring it
+    would turn every deployment into one.
+
+    Extended CONNECT also omits :scheme and :path in the tunnelling form but
+    REQUIRES both here, so the checks below still apply unchanged. }
+  if SameText(LMethod, 'CONNECT') then
+  begin
+    if AStream.Header[':protocol'] = '' then
+    begin
+      ARejectReason := 'Plain CONNECT not supported (this is an origin server, not a proxy)';
+      Exit(rvMethodNotAllowed);
+    end;
+
+    { Extended CONNECT is presented to the application as a GET.
+
+      RFC 8441 §4 makes extended CONNECT the HTTP/2 equivalent of HTTP/1.1's
+      `GET` + `Upgrade: websocket` — same path, same intent, different
+      spelling because HTTP/2 has no upgrade mechanism. Passing the literal
+      method through would be faithful to the wire and useless to the app:
+      Horse's TMethodType has no CONNECT member, so its router matches nothing
+      and answers 405 before any handler runs. That is exactly what stage 18
+      caught.
+
+      Rewriting here also means `THorse.Get('/ws', ...)` is written the same
+      way on this provider as on Indy, epoll and IOCP, where the upgrade
+      genuinely arrives as a GET. The transport difference stays in the
+      transport. }
+    LMethod := 'GET';
   end;
 
   // (2) :scheme must be http or https (RFC 7540 §8.1.2.3).
@@ -188,6 +219,31 @@ begin
     end;
   finally
     LHeaders.Free;
+  end;
+
+  { WS-8441 — synthesise the upgrade headers RFC 8441 removed.
+
+    `THorseRequest.IsWebSocket` tests for `Upgrade: websocket`, and
+    `UpgradeToWebSocket` refuses with 400 without it. HTTP/2 has no such
+    header — connection-specific headers are forbidden outright (RFC 9113
+    §8.2.2), and the validation above rejects any request that carries one.
+    RFC 8441 replaces the whole mechanism with `:protocol`.
+
+    So these two are added to the PARSED header view only; nothing is
+    fabricated on the wire, and the check above still refuses a real `upgrade`
+    header from a peer. What it buys is that a WebSocket route reads the same
+    on this provider as on Indy, epoll and IOCP — `Req.IsWebSocket` is True,
+    and middleware inspecting these headers behaves consistently.
+
+    The alternative was teaching Horse's core about `:protocol`, which is the
+    better long-term fix and a change to shared framework code; this keeps the
+    HTTP/2 spelling difference inside the HTTP/2 provider, exactly like the
+    CONNECT→GET mapping in RawRequest.GetMethod. }
+  if SameText(AStream.Header[':method'], 'CONNECT')
+     and SameText(AStream.Header[':protocol'], 'websocket') then
+  begin
+    AHorseReq.Headers.Dictionary.AddOrSetValue('upgrade', 'websocket');
+    AHorseReq.Headers.Dictionary.AddOrSetValue('connection', 'Upgrade');
   end;
 
   // ── Cookies ─────────────────────────────────────────────────────────────

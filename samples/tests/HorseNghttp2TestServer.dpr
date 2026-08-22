@@ -51,6 +51,7 @@ uses
   Horse.Exception,
   Horse.Exception.Interrupted,
   Horse.Response,   { IHorseStreamWriter — the /stream/* routes (STREAM-1) }
+  Horse.Core.WebSocket,   { IHorseWebSocketConnection — /ws (WS-8441) }
   Horse.Provider.Nghttp2,
   { Linking this is what makes `eventloop` do anything — Nghttp2.Server holds
     only a function pointer and never names the unit. Unconditional on
@@ -468,6 +469,7 @@ type
     procedure ContentType(const AWriter: IHorseStreamWriter);
     procedure Empty      (const AWriter: IHorseStreamWriter);
     procedure Sse        (const AWriter: IHorseStreamWriter);
+    procedure Flood      (const AWriter: IHorseStreamWriter);
   end;
 
 var
@@ -538,6 +540,86 @@ procedure StreamEmpty(Req: THorseRequest; Res: THorseResponse);
 begin
   Res.ContentType('application/x-ndjson; charset=utf-8');
   Res.SendStream(GStreamRoutes.Empty);
+end;
+
+// ─── WebSocket over HTTP/2 (RFC 8441 extended CONNECT)          (WS-8441) ──
+//
+//  Reached only by a client that sends `:method CONNECT` + `:protocol
+//  websocket`, which requires the server to have advertised
+//  SETTINGS_ENABLE_CONNECT_PROTOCOL — hence the EnableWebSocket opt-in in the
+//  startup block below. A plain GET to this path gets 501 from Horse's own
+//  fail-fast, because no upgrader is registered for it.
+//
+//  Callbacks are METHODS, not anonymous procedures: FPC without
+//  FUNCTIONREFERENCES compiles no anonymous procs, and the WebSocket skill
+//  requires object methods on that compiler.
+//
+//  Verify with a browser console (wss:// against a TLS build) or any client
+//  implementing RFC 8441:
+//    const ws = new WebSocket('ws://127.0.0.1:9010/ws');
+//    ws.onmessage = e => console.log(e.data);
+//    ws.onopen = () => ws.send('hello');
+
+//  PLAIN UNIT-SCOPE PROCEDURES, not methods — and this differs from the
+//  /stream/* routes above on purpose. The two callback families are declared
+//  differently in Horse:
+//
+//    THorseStreamProc     = procedure(...) of object;          // both compilers
+//    TOnWebSocketConnect  = procedure(...);                    // FPC
+//                         = reference to procedure(...);       // Delphi
+//
+//  WebSocket callbacks are NOT `of object`, so a bound method fails on FPC
+//  with "Incompatible type for arg no. 1 ... expected <procedure variable
+//  type>". A plain procedure satisfies both: Delphi accepts a global
+//  procedure where it expects a reference-to-procedure, FPC requires exactly
+//  one. State that a method would have carried on Self goes in a global.
+
+procedure WsOnMessage(const AConn: IHorseWebSocketConnection; const AText: string);
+begin
+  { Echo, prefixed so a test can tell a server reply from its own transmission. }
+  AConn.SendText('echo:' + AText);
+end;
+
+procedure WsOnConnect(const AConn: IHorseWebSocketConnection);
+begin
+  AConn.OnMessage := WsOnMessage;
+  AConn.SendText('welcome');
+end;
+
+procedure WsEcho(Req: THorseRequest; Res: THorseResponse);
+begin
+  { Do NOT touch Req/Res inside the WebSocket callbacks — the HTTP request
+    lifecycle ends at the upgrade and the context is recycled. Everything the
+    connection needs comes through IHorseWebSocketConnection. }
+  Res.UpgradeToWebSocket(WsOnConnect);
+end;
+
+{ BACKPRESSURE-1. Emits far more than the 1 MB high-water mark as fast as it
+  can, with no pacing at all — the shape that used to grow the outbound buffer
+  without limit.
+
+  What this asserts is bounded MEMORY, which a response-body check cannot see:
+  the client receives the same bytes either way. The evidence is the server's
+  RSS during the transfer, or simply that a 64 MB stream completes on a machine
+  that could not hold 64 MB of backlog. The producer now parks in
+  AwaitDrainRoom whenever the backlog passes HIGH and resumes at LOW. }
+procedure TStreamRoutes.Flood(const AWriter: IHorseStreamWriter);
+var
+  LChunk: string;
+  I:      Integer;
+begin
+  LChunk := StringOfChar('F', 64 * 1024);   { 64 KB per write }
+  for I := 1 to 1024 do                      { 64 MB total }
+  begin
+    if not AWriter.IsConnected then Break;
+    AWriter.Write(LChunk);
+  end;
+end;
+
+procedure StreamFloodRoute(Req: THorseRequest; Res: THorseResponse);
+begin
+  Res.ContentType('application/octet-stream');
+  Res.SendStream(GStreamRoutes.Flood);
 end;
 
 procedure StreamSse(Req: THorseRequest; Res: THorseResponse);
@@ -719,6 +801,12 @@ begin
   { Holds the four streaming writer callbacks. A singleton because SendStream
     wants a bound method and the routes are stateless — see TStreamRoutes. }
   GStreamRoutes := TStreamRoutes.Create;
+
+  { WS-8441 opt-in. Off by default in the provider, because advertising
+    SETTINGS_ENABLE_CONNECT_PROTOCOL invites clients to attempt an upgrade
+    this transport can only honour for RFC 8441-capable peers — and it has no
+    HTTP/1.1 fallback for the rest. }
+  THorseProviderNghttp2.EnableWebSocket := True;
   try
     // Parse args. `tls` = plain TLS (server cert only); `mtls` = mTLS
     // (server cert + client cert required, signed by ca.pem). mtls implies tls.
@@ -927,6 +1015,12 @@ begin
     THorse.Get   ('/stream/content-type',        StreamContentType);
     THorse.Get   ('/stream/empty',               StreamEmpty);
     THorse.Get   ('/stream/sse',                 StreamSse);
+    THorse.Get   ('/stream/flood',               StreamFloodRoute);   { BACKPRESSURE-1 }
+
+    { WS-8441. Registered as a GET route: Horse routes extended CONNECT
+      through its normal table, and the upgrader is what makes the difference,
+      not the verb. }
+    THorse.Get   ('/ws',                         WsEcho);
 
     // ─── M2b: HTTP/2 trailer demo (gRPC-style grpc-status trailer) ─────────
     THorse.Get   ('/grpc-status-zero',           GrpcStatusZero);
