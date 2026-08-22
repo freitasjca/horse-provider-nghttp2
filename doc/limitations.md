@@ -1,10 +1,9 @@
-# Limitations (v1.0.0)
+# Limitations (v1.2.0)
 
 - **No HTTP/1.1 fallback** — the server speaks HTTP/2 exclusively. HTTP/1.1-only clients cannot connect. This also constrains what can reverse-proxy it: the proxy's **back leg** must be HTTP/2, which rules out `nginx proxy_pass`, Apache's `mod_proxy_http`, and IIS ARR entirely. Use nginx `grpc_pass`, Apache `mod_proxy_http2` with an `h2c://` backend, or expose directly. See [deployment.md](deployment.md).
 - **No in-process hosting** — ISAPI, Apache module, CGI and FastCGI are mutually exclusive with every Horse provider (compile-time `{$MESSAGE FATAL}`). Under those models the web server owns the socket, so there is no HTTP/2 and no gRPC. See [deployment.md](deployment.md).
 - **No server push** — deprecated by browsers; out of scope.
-- **Streaming has no producer backpressure** — `AWriter.Write` appends to a buffer and returns; HTTP/2 flow control throttles the wire, not the handler. A handler producing faster than the peer consumes grows memory until it catches up. Pace the loop or check `IsConnected`. See [streaming.md](streaming.md#backpressure).
-- **gRPC: no streaming RPCs** — unary only. Server-streaming, client-streaming, and bidi streaming are planned.
+- **Streaming backpressure does not apply under inline dispatch** — with a worker pool (the default) `AWriter.Write` parks the producer at a 1 MB backlog and resumes at 256 KB. Under `WORKER_THREADS_INLINE` the handler *is* the connection thread that would drain the buffer, so waiting could never be satisfied and the buffer is unbounded by construction. See [streaming.md](streaming.md#backpressure).
 - **gRPC: no map fields** — `map<K,V>` is not yet supported. Repeated fields (`TArray<T>`) work as of M1c.2; maps, and the unsigned / ZigZag / fixed scalar variants, remain planned.
 - **gRPC: default-valued scalars are still emitted** — proto3 says a field holding its default (`0`, `''`, `False`, empty `bytes`) should be omitted from the wire. This codec writes every scalar field unconditionally, so an all-default message is larger than the canonical encoding. Harmless for interop — every proto3 decoder accepts explicit defaults — but it wastes bytes and means byte-for-byte comparison against another stack's output will differ. Repeated fields *do* omit correctly when empty. See [grpc.md](grpc.md#wire-behaviour).
 - **gRPC on FPC requires libffi** for `RegisterService<T>` — `sudo apt install libffi-dev` + the libffi FPC package path on the compile line. Suppress with `HORSE_GRPC_NO_FFI` when only using `RegisterMethod`.

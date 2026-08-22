@@ -85,19 +85,35 @@ Windows builds it through the normal Delphi project.
 > reports `PPU Invalid Version 207 expecting 208 / Can't find unit pthreads`,
 > which reads as a missing unit but is a wrong-compiler unit.
 
+> **Stage 18 needs Python.** It performs a WebSocket-over-HTTP/2 upgrade
+> (RFC 8441) via the `h2` package — no C tool in the suite implements 8441, and
+> `TNghttp2Client` has no extended CONNECT. Being an independent implementation
+> is part of its value, the way grpcurl is for gRPC.
+>
+> ```bash
+> uv venv --python 3.12 ~/.venvs/horse-ws
+> uv pip install --python ~/.venvs/horse-ws/bin/python h2
+> WS_PYTHON=~/.venvs/horse-ws/bin/python bash build-fpc.sh
+> ```
+>
+> Multi-version setup: `docs/Python-Install-proper.md` in the workspace root.
+> Without it stage 18 reports `SKIP` and everything else still runs.
+
 Checks 09–11 cover repeated fields: round-trip across both wire families,
 byte-exact packed framing, and decoding of unpacked and fragmented input that
 our own encoder never produces.
 
-## FPC / Linux — build-fpc.sh (12 stages)
+## FPC / Linux — build-fpc.sh (18 stages)
 
 ```bash
 cd samples/tests
-bash build-fpc.sh                  # all 12 stages
+bash build-fpc.sh                  # all 18 stages
 bash build-fpc.sh --compile-only   # stages 1–4 only
 ```
 
-Stages narrow in scope so a failure names its own cause: socket alone → session + server → both programs → 94-check suite → graceful-shutdown delivery (nghttp witness) → connection-thread leak growth → two-stage GOAWAY frame trace → TLS → mTLS → gRPC. Requires `h2load` and `nghttp` (`apt install nghttp2-client`).
+Stages narrow in scope so a failure names its own cause: socket alone → session + server → both programs → 94-check suite → graceful-shutdown delivery (nghttp witness) → connection-thread leak growth → two-stage GOAWAY frame trace → TLS → mTLS → gRPC → the same suites again via the epoll event loop → streaming timing and producer backpressure → WebSocket upgrade. Requires `h2load` and `nghttp` (`apt install nghttp2-client`); stage 18 additionally needs Python with `h2`.
+
+A full green run reports **27 passed** — more than 18, because several stages assert more than once (mTLS checks positive and negative; stage 6b covers three connection shapes; stage 18 makes four assertions).
 
 Stage 12 is the **only** stage that exercises the epoll engine — and it **fails** (not passes) when the engine is unavailable, because `eventloop` degrades silently and a fallback run would retest the thread driver that stage 5 already covered.
 

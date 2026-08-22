@@ -100,13 +100,44 @@ because the request never completes at all.
 
 ## Backpressure
 
-There is none. `Write` appends to the stream's buffer and returns; HTTP/2 flow
-control throttles the wire, not the producer. A handler that generates
-unboundedly fast — a `while True` with no delay — grows memory until the client
-catches up.
+`Write` parks the producing handler once the outbound backlog passes **1 MB**,
+and releases it at **256 KB**.
 
-Pace the loop, or check `IsConnected` and stop. A bounded buffer plus a signal
-the handler can wait on is deferred to v0.2.
+Two watermarks rather than one: blocking until the buffer empties makes the
+producer stop and start on every frame, whereas parking at the high mark and
+resuming at the low one lets it refill in useful batches. The wait happens
+*before* the append, not after — waiting afterwards would let the buffer
+overshoot by one write of arbitrary size, which defeats the bound for a handler
+emitting megabyte chunks.
+
+What this prevents: HTTP/2 flow control throttles the **wire**, not the
+producer. Without a bound, a `while True do Writer.Write(...)` loop is an
+out-of-memory, not a slow response.
+
+```pascal
+// Safe now — the writer blocks rather than the buffer growing.
+for I := 1 to 1024 do
+begin
+  if not AWriter.IsConnected then Break;
+  AWriter.Write(SixtyFourKilobytes);
+end;
+```
+
+Still check `IsConnected`: backpressure bounds memory, it does not notice that
+a peer has gone. A producer parked against a dead stream is released by
+`MarkStreamClosed`, but one looping happily against a departed peer keeps
+going until it checks.
+
+### Not under inline dispatch
+
+`WORKER_THREADS_INLINE` runs the handler **on the connection thread** — the
+same thread whose read callback would drain the buffer, after the handler
+returns. A wait there could never be satisfied, so it would deadlock rather
+than throttle. The producer therefore does not block in that mode, and the
+buffer is unbounded by construction.
+
+That is a property of inline dispatch, not something the writer can fix. If
+you stream, use the worker pool (the default).
 
 ## Testing
 
@@ -114,6 +145,7 @@ the handler can wait on is deferred to v0.2.
 |---|---|---|
 | Status, body, ordering, content-type, concurrent streams, SSE | `HorseNghttp2TestClient` tests 33–37 | ✓ 106/106 on FPC 3.3.1, all six transport configurations |
 | **Incremental arrival** (timing) | `build-fpc.sh` stage 15 | ✓ 5 events spanned 247 ms (theoretical 240 ms) |
+| **Producer backpressure** (memory) | `build-fpc.sh` stage 16 | ✓ streamed 17.1 MB, peak RSS grew 2.9 MB |
 
 Validated 2026-08-20 on FPC trunk 3.3.1 / Linux across h2c, TLS and mTLS, on
 both the thread driver and the epoll event loop; and on Delphi 12 / Win64
@@ -155,6 +187,7 @@ is the only thing distinguishing streaming from a slow single response, is lost.
 
 ## Limitations
 
-- No producer backpressure (above).
-- gRPC streaming RPCs are a separate feature and still planned — this is HTTP
-  streaming, not `stream` in a `.proto`.
+- No backpressure under inline dispatch (above).
+- gRPC streaming RPCs are a **separate** feature — all three shapes ship (see
+  [grpc.md](grpc.md)). This page is HTTP streaming; that is `stream` in a
+  `.proto`.

@@ -1,8 +1,8 @@
 # horse-provider-nghttp2
 
-**Status: v1.0.0 — production-ready (h2c + TLS + mTLS + gRPC, Delphi + FPC trunk 3.3.1).**
+**Status: v1.2.0 — production-ready (h2c + TLS + mTLS + gRPC + streaming + WebSocket, Delphi + FPC trunk 3.3.1).**
 
-HTTP/2-native transport provider for [Horse](https://github.com/HashLoad/horse), built on [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) v1.0.0 and the C library [libnghttp2](https://nghttp2.org/). Drop-in replacement for the default Indy transport — activate with one compiler define, keep your existing routes and middleware unchanged.
+HTTP/2-native transport provider for [Horse](https://github.com/HashLoad/horse), built on [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) v1.2.0 and the C library [libnghttp2](https://nghttp2.org/). Drop-in replacement for the default Indy transport — activate with one compiler define, keep your existing routes and middleware unchanged.
 
 Companion to [`horse-provider-crosssocket`](https://github.com/freitasjca/horse-provider-crosssocket) (HTTP/1.1 async via Delphi-Cross-Socket) and [`horse-provider-mormot`](https://github.com/freitasjca/horse-provider-mormot) (mORMot2 stack, incl. `http.sys`).
 
@@ -14,9 +14,10 @@ Companion to [`horse-provider-crosssocket`](https://github.com/freitasjca/horse-
 - **HPACK header compression** — reduces per-request overhead on high-frequency routes
 - **TLS with ALPN** — `h2` over HTTPS; OpenSSL 3.x / 1.1.x auto-detected at runtime, no recompile
 - **mTLS** — client certificate verification for zero-trust service-to-service calls
-- **gRPC v0.1** — unary RPCs, protobuf codec, two registration styles (`RegisterMethod` / `RegisterService<T>`)
-- **Async worker pool** — handlers run off the connection thread; 22.3× throughput on blocking routes
+- **gRPC** — unary plus all three streaming shapes (server, client, bidirectional); protobuf codec with repeated fields; two registration styles (`RegisterMethod` / `RegisterService<T>`)
+- **Async worker pool** — handlers run off the connection thread; 18.3× throughput on blocking routes
 - **Streaming & SSE** — `Res.SendStream` for Web Streams (NDJSON) and Server-Sent Events; no chunked framing needed on HTTP/2
+- **WebSocket over HTTP/2** — RFC 8441 extended CONNECT, sharing the connection with regular streams instead of monopolising a socket; opt-in, off by default
 - **Graceful shutdown** — two-stage GOAWAY per RFC 9113 §6.8; in-flight requests complete before the server closes
 - **Event-loop I/O** — epoll (Linux) and IOCP (Windows) engines, opt-in via `UseEventLoop`
 - **Cross-platform** — Windows/Delphi 12, Linux/FPC trunk 3.3.1, Linux/Delphi (PAServer)
@@ -32,7 +33,11 @@ and middleware port over unchanged, but the wire does not:
 - A reverse proxy must speak HTTP/2 on its **back leg**. nginx `grpc_pass` and
   Apache `mod_proxy_http2` do; `proxy_pass`, `mod_proxy_http` and IIS ARR do
   not. See [doc/deployment.md](doc/deployment.md).
-- No WebSocket — RFC 8441 is out of scope for v1.
+- WebSocket needs RFC 8441 (extended CONNECT), not the HTTP/1.1 handshake. Opt-in
+  and off by default. Browsers negotiate it transparently — `new WebSocket(...)`
+  is unchanged — but most non-browser clients and libraries speak RFC 6455 over
+  HTTP/1.1 only, and there is no HTTP/1.1 here to fall back to, so for them it is
+  "cannot connect" rather than "slower path". See [doc/websocket.md](doc/websocket.md).
 
 Best fit: gRPC, service-to-service APIs, and clients you control. For a public
 HTTP/1.1 endpoint, use one of Horse's other transports.
@@ -45,7 +50,7 @@ HTTP/1.1 endpoint, use one of Horse's other transports.
 
 - Delphi 10.4 Sydney or later / FPC trunk 3.3.1 (FPC 3.2.2 is a hard blocker)
 - Horse ≥ 3.3.0 with NGHTTP2 hooks — copy `patches/horse/src/Horse.pas` over your checkout
-- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) ≥ 1.0.0
+- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) ≥ 1.2.0 — WebSocket needs the `EnableConnectProtocol` API added in 1.2.0
 - libnghttp2 ≥ 1.59 — **required at run time**, dynamic-loaded (`nghttp2.dll` / `libnghttp2.so.14` / `libnghttp2.dylib`); see [getting-nghttp2-windows.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-windows.md) / [getting-nghttp2-linux.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-linux.md)
 - OpenSSL 3.x or 1.1 for TLS only (auto-detected at runtime)
 
@@ -135,6 +140,7 @@ C.Connect('127.0.0.1', 9443);
 | Concurrency & worker pool | [doc/concurrency.md](doc/concurrency.md) |
 | Deployment — proxies, app types, load balancers | [doc/deployment.md](doc/deployment.md) |
 | Streaming & SSE | [doc/streaming.md](doc/streaming.md) |
+| WebSocket (RFC 8441) | [doc/websocket.md](doc/websocket.md) |
 | Graceful shutdown | [doc/graceful-shutdown.md](doc/graceful-shutdown.md) |
 | TLS and mTLS | [doc/tls.md](doc/tls.md) |
 | gRPC | [doc/grpc.md](doc/grpc.md) |
