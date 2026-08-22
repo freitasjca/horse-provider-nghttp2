@@ -3,6 +3,11 @@
 `Res.SendStream` works on the nghttp2 provider as of STREAM-1. v1.0.0 answered
 `501` on these routes; that stub is gone.
 
+> **Requires a patched `Horse.Response.pas`** — open pull request
+> [#552](https://github.com/HashLoad/horse/pull/552). Without it, streaming
+> routes return total silence: no headers, no body, no error, nothing logged.
+> See [Horse core requirements](../README.md#horse-core-requirements).
+
 ## Using it
 
 Identical to every other Horse provider — the handler sets a content type and
