@@ -65,16 +65,25 @@ boss install github.com/freitasjca/horse-provider-nghttp2
 ### Horse core requirements
 
 This provider needs five files from Horse core that upstream does not yet carry.
-Four are open pull requests against `HashLoad/horse`; until they merge, use the
-matching branch from [`freitasjca/horse`](https://github.com/freitasjca/horse).
+Four of them are open pull requests against `HashLoad/horse`. Until those merge,
+use the **`nghttp2-required`** branch of
+[`freitasjca/horse`](https://github.com/freitasjca/horse) — it is current
+upstream plus exactly these five files, and nothing else:
+
+```
+git clone -b nghttp2-required https://github.com/freitasjca/horse.git
+```
 
 | Horse core file | Provides | Upstream |
 |---|---|---|
-| `Horse.pas` | NGHTTP2 provider hooks — without them the define does not select this provider | `freitasjca/horse` master |
-| `Horse.Response.pas` | Adds `HORSE_PROVIDER_NGHTTP2` to the stream-writer factory guard | [PR #552](https://github.com/HashLoad/horse/pull/552) — `fix/stream-writer-factory-guard` |
-| `Horse.Provider.Socket.WebSocket.pas` | epoll transport no longer treats `EAGAIN` as a disconnect | [PR #549](https://github.com/HashLoad/horse/pull/549) — `fix/websocket-epoll-eagain` |
+| `Horse.pas` | NGHTTP2 provider hooks — without them the define does not select this provider | fork-only, no PR yet |
+| `Horse.Response.pas` | Adds `HORSE_PROVIDER_NGHTTP2` to the stream-writer factory guard | [PR #552](https://github.com/HashLoad/horse/pull/552) |
+| `Horse.Provider.Socket.WebSocket.pas` | epoll transport no longer treats `EAGAIN` as a disconnect | [PR #549](https://github.com/HashLoad/horse/pull/549) |
 | `Horse.Request.pas` | `SetWebSocketUpgrade`, so RFC 8441 extended CONNECT is recognised as a WebSocket | [PR #550](https://github.com/HashLoad/horse/pull/550) |
-| `Horse.Core.WebSocket.pas` | FPC-only `FeedBytes` interface-to-class cast | [PR #551](https://github.com/HashLoad/horse/pull/551) — `fix/websocket-feedbytes-fpc` |
+| `Horse.Core.WebSocket.pas` | FPC-only `FeedBytes` interface-to-class cast | [PR #551](https://github.com/HashLoad/horse/pull/551) |
+
+As each PR merges, its file drops off this list and the branch is rebased onto
+the newer upstream. When all four have merged, only `Horse.pas` remains.
 
 **All four failures are silent**, which is why this list matters more than it
 looks:
