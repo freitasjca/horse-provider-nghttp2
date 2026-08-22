@@ -277,6 +277,23 @@ echo "── 4  HorseNghttp2TestClient ─────────────�
 CLIENT_OK=0
 compile_unit "HorseNghttp2TestClient.dpr" "HorseNghttp2TestClient.dpr" && CLIENT_OK=1
 
+echo
+echo "── 4b  HorseNghttp2DrainCheck ──────────────────────────────────────────"
+# Compiled by the harness rather than by hand, because these FLAGS carry -n plus
+# an explicit unit list. A bare `fpc` reads /etc/fpc.cfg, loads the distro 3.2.2
+# RTL under trunk, and fails with `PPU Invalid Version 207 expecting 208` — which
+# reads as a code defect and is not. See doc/testing.md.
+#
+# Only compiled here; it is RUN against a server started with shutdown-after,
+# one server per case — see verify-drain-delivery.sh (Linux) and
+# verify-drain-delivery.bat (Windows, where it is the only drain client, since
+# the Windows nghttp2 distribution ships no nghttp CLI).
+if [[ -f HorseNghttp2DrainCheck.dpr ]]; then
+  compile_unit "HorseNghttp2DrainCheck.dpr" "HorseNghttp2DrainCheck.dpr" || true
+else
+  skip "HorseNghttp2DrainCheck.dpr not present"
+fi
+
 if [[ $COMPILE_ONLY -eq 1 ]]; then
   echo
   echo "Stages: $PASS passed, $FAIL failed  (--compile-only)"

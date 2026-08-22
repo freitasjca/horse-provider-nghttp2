@@ -21,12 +21,12 @@ All items marked **✓** ship in the v1.0.0 public release. Internal milestone l
 | FPC trunk 3.3.1 — full parity (HTTP/2 + gRPC + TLS + mTLS) | **✓** |
 | gRPC-over-HTTP/2 — unary RPCs, M4a + M4c registration styles | **✓** (see `samples/grpc/`) |
 | Protobuf codec — all scalar types + nested messages | **✓** |
-| Concurrent dispatch — worker pool, streams no longer serialised per connection | **✓** (22.3× on blocking routes) |
+| Concurrent dispatch — worker pool, streams no longer serialised per connection | **✓** (18.3× on blocking routes) |
 | Graceful shutdown — drain waits for delivery, two-stage GOAWAY (RFC 9113 §6.8) | **✓** |
 | Memory-BIO TLS — OpenSSL never touches the socket (event-loop prerequisite) | **✓** |
 | Saturated-queue inline fallback (`FALLBACK-1`) | **✓** |
 | `SheddedRequests` class counter — capacity signal (`OBSERV-1`) | **✓** |
-| **Event-loop I/O** — epoll (Linux) + IOCP (Windows), opt-in via `UseEventLoop` | **✓** (IOCP graceful shutdown under load to be re-validated) |
+| **Event-loop I/O** — epoll (Linux) + IOCP (Windows), opt-in via `UseEventLoop` | **✓** (both engines' graceful shutdown validated under load 2026-08-22 — 3/3 delivery shapes each, resolved-driver asserted) |
 | Password-protected private keys | implemented, untested — `SSLKeyPassword` reaches a wired `passwd_cb`, but no fixture uses an encrypted key |
 | **Streaming / SSE** — `Res.SendStream`, Web Streams + Server-Sent Events | **✓** (STREAM-1 — see [streaming.md](streaming.md)) |
 | **gRPC — repeated fields** (packed numerics + LEN-per-element) | **✓** (M1c.2 — any `TArray<T>`; decoder accepts both wire forms; 75/75 on Delphi 12 + FPC 3.3.1) |
@@ -79,9 +79,9 @@ around that gets harder:
 
 ### And this provider has open work first
 
-IOCP graceful shutdown is still not re-validated on Windows; gRPC lacks map
-fields, the unsigned/ZigZag/fixed scalar variants, and codegen. Starting a second
-protocol widens the surface faster than validation can follow — and the
+gRPC lacks map fields, the unsigned/ZigZag/fixed scalar variants, and codegen.
+Starting a second protocol widens the surface faster than validation can
+follow — and the
 expensive half of this work has consistently been *proving* behaviour, not
 writing it.
 

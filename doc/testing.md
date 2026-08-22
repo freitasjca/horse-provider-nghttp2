@@ -105,11 +105,11 @@ Checks 09–11 cover repeated fields: round-trip across both wire families,
 byte-exact packed framing, and decoding of unpacked and fragmented input that
 our own encoder never produces.
 
-## FPC / Linux — build-fpc.sh (18 stages)
+## FPC / Linux — build-fpc.sh (19 stages)
 
 ```bash
 cd samples/tests
-bash build-fpc.sh                  # all 18 stages
+bash build-fpc.sh                  # all 19 stages (18 numbered, plus 4b)
 bash build-fpc.sh --compile-only   # stages 1–4 only
 ```
 
@@ -118,6 +118,65 @@ Stages narrow in scope so a failure names its own cause: socket alone → sessio
 A full green run reports **27 passed** — more than 18, because several stages assert more than once (mTLS checks positive and negative; stage 6b covers three connection shapes; stage 18 makes four assertions).
 
 Stage 12 is the **only** stage that exercises the epoll engine — and it **fails** (not passes) when the engine is unavailable, because `eventloop` degrades silently and a fallback run would retest the thread driver that stage 5 already covered.
+
+## Graceful-shutdown delivery gate
+
+Answers the question the `h2load started == succeeded` gate could not: does a
+**conforming client**, with a request genuinely in flight across the shutdown
+trigger, get its response? Three shapes:
+
+| | Shape | Why |
+|---|---|---|
+| A | 1 request | baseline |
+| B | 4 concurrent, 4 connections | mirrors `h2load -c 4 -m 1` |
+| C | 8 streams, **1 connection** | the only shape where many streams share one session through the drain, so the only one exercising GOAWAY's `last_stream_id` |
+
+**Linux** — driven by `nghttp`:
+
+```bash
+cd samples/tests
+bash verify-drain-delivery.sh                      # thread-per-connection
+bash verify-drain-delivery.sh --engine=eventloop   # epoll
+```
+
+**Windows** — driven by `HorseNghttp2DrainCheck`, a Pascal HTTP/2 client:
+
+```bat
+cd samples\tests
+verify-drain-delivery.bat eventloop      REM eventloop = IOCP on Windows
+```
+
+The Windows path exists because the nghttp2 distribution for Windows ships the
+DLL without the CLI tools, so `nghttp` is unavailable — which is why IOCP went
+unvalidated for weeks. Driving a Windows server from WSL instead would reintroduce
+the mirrored-networking RST race that fails cases A and C ~100% of the time.
+
+Both scripts **assert the resolved driver** matches what was requested.
+`eventloop` is a request, not a guarantee: it degrades silently to the thread
+driver on a build without the engine unit linked, and a green run against the
+wrong driver proves nothing.
+
+> Case C requires Delphi-nghttp2 **≥ 1.4.0**. Before `BeginRequest`/`PumpAll`/
+> `TakeResponse` (MULTISTREAM-1), `TNghttp2Client` pumped each request to
+> completion before returning, so N streams on one connection could not be
+> expressed at all.
+
+Validated 2026-08-22 — 3/3 on each of: thread (Linux), epoll (Linux), IOCP
+(Windows). The Pascal driver and `nghttp` agree 3/3 on the same Linux server,
+which is what licenses trusting the driver where `nghttp` does not exist.
+
+The driver can also be run standalone, one case per server lifetime — the drain
+fires once and the process exits:
+
+```bash
+./HorseNghttp2TestServer shutdown-after=3000 shutdown-timeout=20000 &
+sleep 0.4
+./HorseNghttp2DrainCheck case=C
+```
+
+`shutdown-after` is measured from **server start**, so it must outlast startup
+plus connect — otherwise the drain fires with nothing in flight and the client
+reports a connect failure that looks like a lost response.
 
 ## Delphi Linux64 — compile check
 

@@ -55,12 +55,42 @@
 #  15 chars and the name is 22, so it exits 0 having killed nothing. Kill by
 #  the truncation, and fall back to the port's real owner.
 #
-#  Usage:  bash verify-drain-delivery.sh          (run from samples/tests)
+#  Usage:  bash verify-drain-delivery.sh [--engine=thread|eventloop]
+#          (run from samples/tests)
+#
+#  --engine=thread     (default) thread-per-connection driver
+#  --engine=eventloop  epoll on Linux, IOCP on Windows
+#
+#  The engine is REQUESTED, not guaranteed: `eventloop` degrades silently to the
+#  thread driver on a build without the engine unit linked. So this script reads
+#  the server's own `[driver] RESOLVED:` line and ABORTS on a mismatch rather
+#  than reporting a green run of the wrong driver — the same failure that let
+#  stage 12 hide behind stage 5 for months.
 # ============================================================================
 set -u
 
+ENGINE=thread
+for arg in "$@"; do
+  case "$arg" in
+    --engine=*) ENGINE="${arg#--engine=}" ;;
+    -h|--help)  sed -n '1,70p' "$0"; exit 0 ;;
+    *) echo "unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+
+case "$ENGINE" in
+  thread)          SERVER_ARGS=""          ; WANT_DRIVER="thread per connection" ;;
+  eventloop|epoll|iocp)
+                   SERVER_ARGS="eventloop" ; WANT_DRIVER="event loop" ;;
+  *) echo "--engine must be thread or eventloop (aliases: epoll, iocp)" >&2; exit 2 ;;
+esac
+
 SERVER=./HorseNghttp2TestServer
 PORT=9010
+
+# Not present everywhere (notably Git Bash on Windows); absence only costs the
+# driver assertion a little patience, so degrade rather than refuse.
+if command -v stdbuf > /dev/null 2>&1; then STDBUF="stdbuf -o0 -e0"; else STDBUF=""; fi
 SERVER_COMM="$(basename "$SERVER" | cut -c1-15)"
 
 # Request longer than the trigger, so every request IS in flight when the
@@ -97,7 +127,10 @@ freeport() {
 start_server() {
   local log=$1 i
   freeport || return 1
-  "$SERVER" shutdown-after=$TRIGGER_MS shutdown-timeout=$TIMEOUT_MS \
+  # stdbuf: the server's stdout is block-buffered when redirected, so the
+  # `[driver] RESOLVED:` line can sit unflushed in the buffer long after the
+  # port is bound. build-fpc.sh line-buffers for the same reason.
+  $STDBUF "$SERVER" $SERVER_ARGS shutdown-after=$TRIGGER_MS shutdown-timeout=$TIMEOUT_MS \
     < /dev/null > "$log" 2>&1 &
   SRV=$!
   for i in $(seq 100); do
@@ -107,6 +140,31 @@ start_server() {
     sleep 0.05
   done
   return 1
+}
+
+# The engine is a request, not a guarantee. Confirm the server resolved the one
+# we asked for; a silent fallback would make this whole run measure the wrong
+# driver while reporting green.
+assert_driver() {
+  local log=$1 line i
+  # The line is printed around bind time, and without stdbuf may lag the port
+  # being reachable. Poll rather than assume — a single grep raced the buffer
+  # and aborted runs that were perfectly healthy.
+  for i in $(seq 60); do
+    line=$(grep -m1 '\[driver\] RESOLVED:' "$log" 2>/dev/null)
+    [[ -n "$line" ]] && break
+    sleep 0.05
+  done
+  if [[ -z "$line" ]]; then
+    echo "  ABORT: server never printed its resolved driver (waited 3s)" >&2
+    return 1
+  fi
+  if [[ "$line" != *"$WANT_DRIVER"* ]]; then
+    echo "  ABORT: asked for '$ENGINE' but server resolved: ${line#*RESOLVED: }" >&2
+    echo "         a run against the wrong driver proves nothing." >&2
+    return 1
+  fi
+  return 0
 }
 
 finish_server() {
@@ -174,6 +232,10 @@ WORK=$(mktemp -d)
 if ! start_server "$WORK/server.log"; then
   echo "  !! A VOID — server never bound"; VOIDS=$((VOIDS + 1))
 else
+  if ! assert_driver "$WORK/server.log"; then
+    echo "  !! A VOID — wrong driver"; VOIDS=$((VOIDS + 1))
+    finish_server; rm -rf "$WORK"; exit 2
+  fi
   nghttp "http://127.0.0.1:$PORT/slow/$SLOW_MS" \
     > "$WORK/out.1" 2> "$WORK/err.1"
   echo $? > "$WORK/rc.1"
@@ -187,6 +249,10 @@ WORK=$(mktemp -d)
 if ! start_server "$WORK/server.log"; then
   echo "  !! B VOID — server never bound"; VOIDS=$((VOIDS + 1))
 else
+  if ! assert_driver "$WORK/server.log"; then
+    echo "  !! B VOID — wrong driver"; VOIDS=$((VOIDS + 1))
+    finish_server; rm -rf "$WORK"; exit 2
+  fi
   for i in 1 2 3 4; do
     ( nghttp "http://127.0.0.1:$PORT/slow/$SLOW_MS" \
         > "$WORK/out.$i" 2> "$WORK/err.$i"
@@ -206,6 +272,10 @@ WORK=$(mktemp -d)
 if ! start_server "$WORK/server.log"; then
   echo "  !! C VOID — server never bound"; VOIDS=$((VOIDS + 1))
 else
+  if ! assert_driver "$WORK/server.log"; then
+    echo "  !! C VOID — wrong driver"; VOIDS=$((VOIDS + 1))
+    finish_server; rm -rf "$WORK"; exit 2
+  fi
   URLS=()
   for i in 1 2 3 4 5 6 7 8; do
     # DISTINCT URLs. nghttp COLLAPSES identical URIs — eight copies of one URL
