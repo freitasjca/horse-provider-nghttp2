@@ -2,6 +2,14 @@
 
 Validated at **runtime** on all three, not merely compiled:
 
+> **FPC 3.2.2 also passes**, verified 2026-08-22: 24 stages green, 1 explicit
+> skip. Everything in the table below that the trunk column covers — the
+> 106-check suite over h2c/TLS/mTLS, the same three via the epoll event loop,
+> graceful shutdown, streaming, backpressure and WebSocket — passes identically
+> on 3.2.2 with `-dHORSE_NGHTTP2_NO_GRPC`. Only the gRPC row needs trunk 3.3.1,
+> for `TCustomAttribute`. The trunk column stays the reference because it is the
+> configuration with **complete** coverage.
+
 | Gate | Windows / Delphi | Linux / FPC 3.3.1 | Linux64 / Delphi |
 |---|---|---|---|
 | 106-check regression, h2c | compiles; run pending | 106/106 | 94/94 (pre-STREAM-1) |

@@ -73,9 +73,11 @@ bash build-codec-fpc.sh          # FPC/Linux
 
 Windows builds it through the normal Delphi project.
 
-> **Never invoke `fpc` directly for this suite.** The distro compiler on Ubuntu
-> is FPC 3.2.2, a documented hard blocker: it has no `{$RTTI EXPLICIT}` and no
-> `TCustomAttribute`, so the attribute-driven serializer cannot compile. The
+> **Never invoke `fpc` directly for THIS suite.** The distro compiler on Ubuntu
+> is FPC 3.2.2, which cannot build the **codec**: it has no `{$RTTI EXPLICIT}`
+> and no `TCustomAttribute`, so the attribute-driven serializer cannot compile.
+> (The provider itself is fine on 3.2.2 — see
+> [fpc-lazarus.md](fpc-lazarus.md); only the codec and gRPC need trunk.) The
 > errors it produces (`Illegal compiler directive "$RTTI"`, `Identifier not
 > found "TCustomAttribute"`) name symptoms, not the cause. `build-codec-fpc.sh`
 > pins trunk 3.3.1 and refuses to run on 3.2.x with a message that says so.

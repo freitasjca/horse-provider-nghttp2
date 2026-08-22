@@ -1,8 +1,8 @@
 # horse-provider-nghttp2
 
-**Status: v1.2.0 — production-ready (h2c + TLS + mTLS + gRPC + streaming + WebSocket, Delphi + FPC trunk 3.3.1).**
+**Status: v1.3.0 — production-ready (h2c + TLS + mTLS + gRPC + streaming + WebSocket). Delphi 10.4+, FPC 3.2.2 and trunk 3.3.1** — gRPC needs trunk.
 
-HTTP/2-native transport provider for [Horse](https://github.com/HashLoad/horse), built on [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) v1.2.0 and the C library [libnghttp2](https://nghttp2.org/). Drop-in replacement for the default Indy transport — activate with one compiler define, keep your existing routes and middleware unchanged.
+HTTP/2-native transport provider for [Horse](https://github.com/HashLoad/horse), built on [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) v1.3.0 and the C library [libnghttp2](https://nghttp2.org/). Drop-in replacement for the default Indy transport — activate with one compiler define, keep your existing routes and middleware unchanged.
 
 Companion to [`horse-provider-crosssocket`](https://github.com/freitasjca/horse-provider-crosssocket) (HTTP/1.1 async via Delphi-Cross-Socket) and [`horse-provider-mormot`](https://github.com/freitasjca/horse-provider-mormot) (mORMot2 stack, incl. `http.sys`).
 
@@ -20,7 +20,7 @@ Companion to [`horse-provider-crosssocket`](https://github.com/freitasjca/horse-
 - **WebSocket over HTTP/2** — RFC 8441 extended CONNECT, sharing the connection with regular streams instead of monopolising a socket; opt-in, off by default
 - **Graceful shutdown** — two-stage GOAWAY per RFC 9113 §6.8; in-flight requests complete before the server closes
 - **Event-loop I/O** — epoll (Linux) and IOCP (Windows) engines, opt-in via `UseEventLoop`
-- **Cross-platform** — Windows/Delphi 12, Linux/FPC trunk 3.3.1, Linux/Delphi (PAServer)
+- **Cross-platform** — Windows/Delphi 12, Linux/FPC 3.2.2 and trunk 3.3.1, Linux/Delphi (PAServer)
 - **Cross-product app shapes** — Console, VCL, Daemon, Windows Service, FPC Daemon, LCL, HTTPApplication
 
 ## Before you choose it
@@ -48,9 +48,9 @@ HTTP/1.1 endpoint, use one of Horse's other transports.
 
 ### Requirements
 
-- Delphi 10.4 Sydney or later / FPC trunk 3.3.1 (FPC 3.2.2 is a hard blocker)
+- Delphi 10.4 Sydney or later / FPC 3.2.2 or trunk 3.3.1 — **gRPC needs trunk**; build 3.2.2 with `-dHORSE_NGHTTP2_NO_GRPC` (see [doc/fpc-lazarus.md](doc/fpc-lazarus.md))
 - Horse ≥ 3.3.0 with NGHTTP2 hooks — copy `patches/horse/src/Horse.pas` over your checkout
-- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) ≥ 1.2.0 — WebSocket needs the `EnableConnectProtocol` API added in 1.2.0
+- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) ≥ 1.3.0 — FPC 3.2.2 support needs `Nghttp2CpuCount` (1.3.0); WebSocket needs `EnableConnectProtocol` (1.2.0)
 - libnghttp2 ≥ 1.59 — **required at run time**, dynamic-loaded (`nghttp2.dll` / `libnghttp2.so.14` / `libnghttp2.dylib`); see [getting-nghttp2-windows.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-windows.md) / [getting-nghttp2-linux.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-linux.md)
 - OpenSSL 3.x or 1.1 for TLS only (auto-detected at runtime)
 

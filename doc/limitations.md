@@ -1,4 +1,4 @@
-# Limitations (v1.2.0)
+# Limitations (v1.3.0)
 
 - **No HTTP/1.1 fallback** — the server speaks HTTP/2 exclusively. HTTP/1.1-only clients cannot connect. This also constrains what can reverse-proxy it: the proxy's **back leg** must be HTTP/2, which rules out `nginx proxy_pass`, Apache's `mod_proxy_http`, and IIS ARR entirely. Use nginx `grpc_pass`, Apache `mod_proxy_http2` with an `h2c://` backend, or expose directly. See [deployment.md](deployment.md).
 - **No in-process hosting** — ISAPI, Apache module, CGI and FastCGI are mutually exclusive with every Horse provider (compile-time `{$MESSAGE FATAL}`). Under those models the web server owns the socket, so there is no HTTP/2 and no gRPC. See [deployment.md](deployment.md).
@@ -7,6 +7,6 @@
 - **gRPC: no map fields** — `map<K,V>` is not yet supported. Repeated fields (`TArray<T>`) work as of M1c.2; maps, and the unsigned / ZigZag / fixed scalar variants, remain planned.
 - **gRPC: default-valued scalars are still emitted** — proto3 says a field holding its default (`0`, `''`, `False`, empty `bytes`) should be omitted from the wire. This codec writes every scalar field unconditionally, so an all-default message is larger than the canonical encoding. Harmless for interop — every proto3 decoder accepts explicit defaults — but it wastes bytes and means byte-for-byte comparison against another stack's output will differ. Repeated fields *do* omit correctly when empty. See [grpc.md](grpc.md#wire-behaviour).
 - **gRPC on FPC requires libffi** for `RegisterService<T>` — `sudo apt install libffi-dev` + the libffi FPC package path on the compile line. Suppress with `HORSE_GRPC_NO_FFI` when only using `RegisterMethod`.
-- **FPC 3.2.2 is unsupported** — `constref` generics regression affects both the HTTP/2 provider and gRPC. Use FPC trunk 3.3.1.
+- **gRPC requires FPC trunk 3.3.1** — 3.2.2's `Rtti` unit declares no `TCustomAttribute` and its compiler rejects `{$RTTI EXPLICIT}`, both required by the attribute-driven protobuf codec. Everything else — HTTP/2, TLS, mTLS, the epoll event loop, graceful shutdown, streaming and WebSocket — builds and passes on **3.2.2** with `-dHORSE_NGHTTP2_NO_GRPC`. Delphi is unaffected.
 - **Password-protected private keys** — the `SSLKeyPassword` field wires `SSL_CTX_set_default_passwd_cb` but has never been exercised against an encrypted key. Treat as experimental.
 - **Event-loop graceful shutdown** — IOCP driver not yet re-validated with the correct nghttp witness gate; epoll driver reports 96/184 on stage 6. Thread driver is fully validated. See [doc/graceful-shutdown.md](graceful-shutdown.md).

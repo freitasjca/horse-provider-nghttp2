@@ -1,8 +1,22 @@
 # FPC / Lazarus
 
-The provider compiles and runs on **FPC trunk 3.3.1** with full parity to the Delphi build.
+The provider compiles and runs on **FPC trunk 3.3.1** with full parity to the Delphi build, and on **FPC 3.2.2** with everything except gRPC.
 
-**FPC 3.2.2 is a hard blocker** — `constref` generics regression affects both the HTTP/2 provider and gRPC. Use FPC trunk 3.3.1.
+**FPC 3.2.2 — supported, minus gRPC.** Build with `-dHORSE_NGHTTP2_NO_GRPC`;
+`build-fpc.sh` selects it automatically from `fpc -iV`. Verified 2026-08-22:
+24 stages pass, 1 explicit skip. HTTP/2 (h2c, TLS, mTLS), the epoll event loop,
+graceful shutdown, streaming, backpressure and WebSocket RFC 8441 all pass —
+106/106 on six suite configurations.
+
+**gRPC needs trunk 3.3.1.** 3.2.2's `Rtti` unit declares no `TCustomAttribute`
+and the compiler rejects `{$RTTI EXPLICIT}`; the protobuf codec and
+`RegisterService<T>` depend on both.
+
+*Earlier revisions of this file called 3.2.2 a hard blocker and blamed a
+`constref` generics regression. That was wrong: `constref` appears nowhere in
+either source tree. The real 3.2.2 gaps were `TCustomAttribute` (gRPC only) and
+two runtime defects — `TThread.ProcessorCount` returning 1, and a stream-writer
+factory registration order bug in Horse core — all now fixed.*
 
 ## gRPC on FPC
 
