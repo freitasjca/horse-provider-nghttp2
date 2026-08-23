@@ -29,7 +29,7 @@ type
   { Server-streaming writer over one HTTP/2 stream. Send TAKES OWNERSHIP of
     the response object it is handed. }
   TGrpcStreamWriter = Nghttp2.Grpc.StreamWriter.TGrpcStreamWriter
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.StreamWriter. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.StreamWriter. Removed in 2.0.0.';
 
 implementation
 

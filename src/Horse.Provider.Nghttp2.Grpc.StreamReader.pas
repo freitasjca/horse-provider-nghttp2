@@ -30,15 +30,15 @@ const
     its own buffers against them should keep reading the library's values, not
     a copy that can drift. }
   GRPC_READ_TICK_MS = Nghttp2.Grpc.StreamReader.GRPC_READ_TICK_MS
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.StreamReader. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.StreamReader. Removed in 2.0.0.';
   GRPC_MAX_MESSAGE_BYTES = Nghttp2.Grpc.StreamReader.GRPC_MAX_MESSAGE_BYTES
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.StreamReader. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.StreamReader. Removed in 2.0.0.';
 
 type
   { Client-streaming / bidi reader over one HTTP/2 stream. Next returns a
     READER-OWNED object valid only until the following call. }
   TGrpcStreamReader = Nghttp2.Grpc.StreamReader.TGrpcStreamReader
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.StreamReader. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.StreamReader. Removed in 2.0.0.';
 
 implementation
 

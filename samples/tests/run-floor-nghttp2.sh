@@ -92,7 +92,7 @@ trap cleanup EXIT INT TERM
 # Verbatim from build-fpc.sh, which compiles this stack green on this machine.
 # -n is load-bearing: without it fpc reads /etc/fpc.cfg and mixes distro 3.2.2
 # .ppu files into a trunk build ("PPU Invalid Version 207 expecting 208").
-BASE_FLAGS="-n -MDelphi -O2 -dHORSE_PROVIDER_NGHTTP2 -dHORSE_GRPC_NO_FFI \
+BASE_FLAGS="-n -MDelphi -O2 -dHORSE_PROVIDER_NGHTTP2 -dNGHTTP2_GRPC_NO_FFI \
   -Fu$PROV -Fu$DNG -Fu$HORSE -Fu$BENCH/Common -Fu$GUARD -Fu$SECHDR \
   -Fu$TU/rtl -Fu$TU/rtl-console -Fu$TU/rtl-objpas -Fu$TU/rtl-extra \
   -Fu$TU/rtl-generics -Fu$TU/fcl-base -Fu$TU/fcl-web -Fu$TU/fcl-json \

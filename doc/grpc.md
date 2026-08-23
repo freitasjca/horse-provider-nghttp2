@@ -17,7 +17,7 @@ TGrpcRegistry.RegisterMethod('/users.UserService/GetUser',
 TGrpcRegistry.RegisterService<IUserService>(TUserServiceImpl.Create);
 ```
 
-`RegisterService<T>` uses RTTI to walk the interface and register each method automatically. On FPC this requires **libffi** (`sudo apt install libffi-dev` + the libffi FPC package path on the compile line). Suppress with `HORSE_GRPC_NO_FFI` if only using `RegisterMethod`.
+`RegisterService<T>` uses RTTI to walk the interface and register each method automatically. On FPC this requires **libffi** (`sudo apt install libffi-dev` + the libffi FPC package path on the compile line). Suppress with `NGHTTP2_GRPC_NO_FFI` if only using `RegisterMethod`. *(That define was called `HORSE_GRPC_NO_FFI` before 1.7.0. The old spelling still works and emits a hint naming the new one; it stops working at 2.0.0. A define cannot be aliased the way a type can, so both are simply honoured.)*
 
 ## Demo
 
@@ -383,4 +383,4 @@ truncated stream is indistinguishable from a short one.
 - **No map fields** — `map<K,V>` is not yet supported. Planned.
 - **Scalar variants still missing** — unsigned (`uint32`/`uint64`), ZigZag (`sint32`/`sint64`) and fixed (`fixed*`/`sfixed*`) encodings. `int32`/`int64` cover the common cases; the rest are planned.
 - **Streaming RPCs are covered on h2c only** — all three shapes work; TLS/mTLS share the dispatcher, reader and writer, so a transport-specific difference is unlikely, but untested.
-- **FPC requires libffi** for `RegisterService<T>`. Use `RegisterMethod` + `HORSE_GRPC_NO_FFI` to avoid the dependency.
+- **FPC requires libffi** for `RegisterService<T>`. Use `RegisterMethod` + `NGHTTP2_GRPC_NO_FFI` to avoid the dependency.

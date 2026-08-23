@@ -168,9 +168,9 @@ case "$FPCVER" in
 esac
 echo
 
-# -dHORSE_GRPC_NO_FFI: nothing here exercises gRPC dispatch, and the define
+# -dNGHTTP2_GRPC_NO_FFI: nothing here exercises gRPC dispatch, and the define
 # drops the ffi.manager dependency so the build does not also require libffi.
-FLAGS="-n -MDelphi -O1 -gl -dHORSE_PROVIDER_NGHTTP2 -dHORSE_GRPC_NO_FFI $GRPC_DEFINE \
+FLAGS="-n -MDelphi -O1 -gl -dHORSE_PROVIDER_NGHTTP2 -dNGHTTP2_GRPC_NO_FFI $GRPC_DEFINE \
   -Fu. -Fu$PROV -Fu$DNG -Fu$HORSE \
   -Fu$TU/rtl -Fu$TU/rtl-console -Fu$TU/rtl-objpas -Fu$TU/rtl-extra \
   -Fu$TU/rtl-generics -Fu$TU/fcl-base -Fu$TU/fcl-web -Fu$TU/fcl-json \
@@ -852,7 +852,7 @@ fi
 # ── 11 · gRPC over h2c ───────────────────────────────────────────────────────
 # Built separately from every other stage: the demo registers via
 # RegisterService<IGreeter>, which dispatches through TRttiMethod.Invoke, and
-# FPC routes that through ffi.manager. So -dHORSE_GRPC_NO_FFI must be OFF and
+# FPC routes that through ffi.manager. So -dNGHTTP2_GRPC_NO_FFI must be OFF and
 # the libffi units must be on the search path — the opposite of the flags the
 # HTTP stages use, where dropping ffi keeps the build free of libffi entirely.
 echo
@@ -874,7 +874,7 @@ elif ! wait_port_free "$GRPC_PORT" 15; then
   echo "        Clear it with: pkill -f HorseNghttp2GrpcDemo"
 else
   # A DIFFERENT unit output directory from every other stage, and this is not
-  # cosmetic: those stages compiled with -dHORSE_GRPC_NO_FFI, and FPC happily
+  # cosmetic: those stages compiled with -dNGHTTP2_GRPC_NO_FFI, and FPC happily
   # reuses a cached .ppu built under different -d flags. Sharing the directory
   # would silently relink the no-ffi build and RegisterService<T> would fail at
   # run time with nothing in the compile log to explain why.

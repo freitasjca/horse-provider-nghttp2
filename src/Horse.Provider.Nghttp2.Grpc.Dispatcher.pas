@@ -29,20 +29,20 @@ type
   { TryDispatch(AStream): True when the request was application/grpc* and has
     been fully answered — response body plus grpc-status trailer. }
   THorseGrpcDispatcher = Nghttp2.Grpc.Dispatcher.TGrpcDispatcher
-    deprecated 'Moved and renamed: use Nghttp2.Grpc.Dispatcher.TGrpcDispatcher. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0, renamed in 1.6.0: use Nghttp2.Grpc.Dispatcher.TGrpcDispatcher. Removed in 2.0.0.';
 
 const
   { Standard gRPC status codes — the subset this dispatcher emits. }
   GRPC_STATUS_OK               = Nghttp2.Grpc.Dispatcher.GRPC_STATUS_OK
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
   GRPC_STATUS_INVALID_ARGUMENT = Nghttp2.Grpc.Dispatcher.GRPC_STATUS_INVALID_ARGUMENT
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
   GRPC_STATUS_NOT_FOUND        = Nghttp2.Grpc.Dispatcher.GRPC_STATUS_NOT_FOUND
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
   GRPC_STATUS_UNIMPLEMENTED    = Nghttp2.Grpc.Dispatcher.GRPC_STATUS_UNIMPLEMENTED
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
   GRPC_STATUS_INTERNAL         = Nghttp2.Grpc.Dispatcher.GRPC_STATUS_INTERNAL
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
 
 implementation
 

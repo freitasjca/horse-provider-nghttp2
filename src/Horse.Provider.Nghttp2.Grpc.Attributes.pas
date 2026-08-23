@@ -29,7 +29,7 @@ uses
 
 type
   TGrpcServiceAttribute = Nghttp2.Grpc.Attributes.TGrpcServiceAttribute
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Attributes. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Attributes. Removed in 2.0.0.';
 
 implementation
 

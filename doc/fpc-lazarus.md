@@ -34,7 +34,7 @@ factory registration order bug in Horse core.*
 sudo apt install libffi-dev
 ```
 
-Add the libffi FPC package path (`-Fu<fpc-trunk>/lib/.../libffi`) to the compile line. Define `HORSE_GRPC_NO_FFI` to suppress this dependency when only the procedural `RegisterMethod` API is used.
+Add the libffi FPC package path (`-Fu<fpc-trunk>/lib/.../libffi`) to the compile line. Define `NGHTTP2_GRPC_NO_FFI` to suppress this dependency when only the procedural `RegisterMethod` API is used.
 
 ## .lpr requirements
 

@@ -36,33 +36,33 @@ uses
 type
   { Handler signatures — see the library unit for the ownership contracts. }
   TGrpcHandler = Nghttp2.Grpc.Registry.TGrpcHandler
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
   TGrpcInvokeMethod = Nghttp2.Grpc.Registry.TGrpcInvokeMethod
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
   TGrpcServerStreamHandler = Nghttp2.Grpc.Registry.TGrpcServerStreamHandler
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
   TGrpcClientStreamHandler = Nghttp2.Grpc.Registry.TGrpcClientStreamHandler
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
   TGrpcBidiStreamHandler = Nghttp2.Grpc.Registry.TGrpcBidiStreamHandler
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
 
   { Streaming handles handed to streaming handlers. }
   IGrpcStreamWriter = Nghttp2.Grpc.Registry.IGrpcStreamWriter
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
   IGrpcStreamReader = Nghttp2.Grpc.Registry.IGrpcStreamReader
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
 
   TGrpcMethodInfo = Nghttp2.Grpc.Registry.TGrpcMethodInfo
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0 to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
 
   EHorseGrpcRegistry = Nghttp2.Grpc.Registry.EGrpcRegistry
-    deprecated 'Moved and renamed: use Nghttp2.Grpc.Registry.EGrpcRegistry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0, renamed in 1.6.0: use Nghttp2.Grpc.Registry.EGrpcRegistry. Removed in 2.0.0.';
 
   { The registry itself — RegisterMethod, RegisterService<T>,
     RegisterServerStream, RegisterClientStream, RegisterBidiStream,
     IsInboundStreaming, TryGet, Count, Shutdown. }
   THorseGrpc = Nghttp2.Grpc.Registry.TGrpcRegistry
-    deprecated 'Moved and renamed: use Nghttp2.Grpc.Registry.TGrpcRegistry. Removed in 2.0.0.';
+    deprecated 'Moved in 1.5.0, renamed in 1.6.0: use Nghttp2.Grpc.Registry.TGrpcRegistry. Removed in 2.0.0.';
 
 implementation
 

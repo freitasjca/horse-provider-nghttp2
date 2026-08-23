@@ -19,12 +19,12 @@ PROV="$PATCHES_ROOT/patches/horse-provider-nghttp2/src"
 DNG="$PATCHES_ROOT/patches/Delphi-nghttp2/src"
 HORSE="$PATCHES_ROOT/horse/src"
 
-FPC_FLAGS="-n -MDelphi -O1 -gl -dHORSE_PROVIDER_NGHTTP2 -dHORSE_GRPC_NO_FFI \
+FPC_FLAGS="-n -MDelphi -O1 -gl -dHORSE_PROVIDER_NGHTTP2 -dNGHTTP2_GRPC_NO_FFI \
   -Fu. -Fu$PROV -Fu$DNG -Fu$HORSE \
   -Fu$TU/rtl -Fu$TU/rtl-console -Fu$TU/rtl-objpas -Fu$TU/rtl-extra \
   -Fu$TU/rtl-generics -Fu$TU/fcl-base -Fu$TU/fcl-web -Fu$TU/fcl-json \
   -Fu$TU/regexpr -Fu$TU/pthreads -Fu$TU/openssl -Fu$TU/fcl-net -Fu$TU/hash"
-# HORSE_GRPC_NO_FFI: shape tests exercise lifecycle only (signal handlers,
+# NGHTTP2_GRPC_NO_FFI: shape tests exercise lifecycle only (signal handlers,
 # Listen/StopListen) — not gRPC dispatch. Suppresses the ffi.manager uses
 # in Grpc.Registry so these tests compile without the libffi package.
 
