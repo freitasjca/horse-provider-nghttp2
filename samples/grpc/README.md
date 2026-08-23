@@ -25,9 +25,9 @@ Both produce identical wire behaviour and are interchangeable.
 **M4a — explicit per-method:**
 
 ```pascal
-THorseGrpc.RegisterMethod('/greeter.Greeter/Greet',
+TGrpcRegistry.RegisterMethod('/greeter.Greeter/Greet',
   TGreetRequest, TGreetResponse, GreeterService.Greet);
-THorseGrpc.RegisterMethod('/greeter.Greeter/Echo',
+TGrpcRegistry.RegisterMethod('/greeter.Greeter/Echo',
   TEchoRequest, TEchoResponse, GreeterService.Echo);
 ```
 
@@ -36,7 +36,7 @@ Handler signature: `procedure(const AReq, AResp: TObject) of object`. Dispatcher
 **M4c — one-line service registration:**
 
 ```pascal
-THorseGrpc.RegisterService<IGreeter>(TGreeterServiceImpl.Create);
+TGrpcRegistry.RegisterService<IGreeter>(TGreeterServiceImpl.Create);
 ```
 
 Requires `IGreeter` to derive from `IInvokable` and carry `[TGrpcService('greeter.Greeter')]`. Requires `TGreeterServiceImpl._AddRef` / `_Release` to return `-1` (see `horse-grpc` SKILL §2 — prevents ARC destroying the instance during RTTI dispatch). Method signature: `function <Name>(const ARequest: T): TResponse` — dispatcher extracts both classes via RTTI.
@@ -190,7 +190,7 @@ untouched.
 ## Related
 
 - `plans/horse-grpc-nghttp2.md` — full milestone plan (M1 → M6)
-- `patches/Delphi-nghttp2/src/Nghttp2.Grpc.Registry.pas` — the `THorseGrpc` API surface
+- `patches/Delphi-nghttp2/src/Nghttp2.Grpc.Registry.pas` — the `TGrpcRegistry` API surface
 - `patches/Delphi-nghttp2/src/Nghttp2.Grpc.Dispatcher.pas` — 5-byte framing + trailer emission
 - `.claude/skills/delphi-grpc/SKILL.md` — Delphi/gRPC patterns
 - `.claude/skills/delphi-http2/SKILL.md` §6 — HTTP/2 trailer plumbing

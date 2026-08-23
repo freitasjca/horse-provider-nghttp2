@@ -7,14 +7,14 @@ The provider ships a full gRPC v0.1 stack: protobuf codec (all scalar types, nes
 **Procedural — explicit per-method (`RegisterMethod`):**
 
 ```pascal
-THorseGrpc.RegisterMethod('/users.UserService/GetUser',
+TGrpcRegistry.RegisterMethod('/users.UserService/GetUser',
   TGetUserRequest, TGetUserResponse, UserService.GetUser);
 ```
 
 **IInvokable — one-line service registration (`RegisterService<T>`):**
 
 ```pascal
-THorseGrpc.RegisterService<IUserService>(TUserServiceImpl.Create);
+TGrpcRegistry.RegisterService<IUserService>(TUserServiceImpl.Create);
 ```
 
 `RegisterService<T>` uses RTTI to walk the interface and register each method automatically. On FPC this requires **libffi** (`sudo apt install libffi-dev` + the libffi FPC package path on the compile line). Suppress with `HORSE_GRPC_NO_FFI` if only using `RegisterMethod`.
@@ -219,7 +219,7 @@ a streaming RPC returns a *sequence*, not a value, and has no natural
 `IInvokable` shape:
 
 ```pascal
-THorseGrpc.RegisterServerStream('/greeter.Greeter/ListGreetings',
+TGrpcRegistry.RegisterServerStream('/greeter.Greeter/ListGreetings',
   TGreetRequest, TGreetResponse, GreeterService.ListGreetings);
 ```
 
@@ -278,10 +278,10 @@ rpc ChatGreetings (stream GreetRequest) returns (stream GreetResponse);  // many
 ```
 
 ```pascal
-THorseGrpc.RegisterClientStream('/greeter.Greeter/JoinNames',
+TGrpcRegistry.RegisterClientStream('/greeter.Greeter/JoinNames',
   TGreetRequest, TGreetResponse, GreeterService.JoinNames);
 
-THorseGrpc.RegisterBidiStream('/greeter.Greeter/ChatGreetings',
+TGrpcRegistry.RegisterBidiStream('/greeter.Greeter/ChatGreetings',
   TGreetRequest, TGreetResponse, GreeterService.ChatGreetings);
 ```
 

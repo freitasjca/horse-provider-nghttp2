@@ -99,12 +99,12 @@ begin
       signature, and registers /greeter.Greeter/Greet + /greeter.Greeter/Echo.
       Wire behaviour is identical to the two-call M4a form below (commented). }
     LGreeter := TGreeterServiceImpl.Create;
-    THorseGrpc.RegisterService<IGreeter>(LGreeter);
+    TGrpcRegistry.RegisterService<IGreeter>(LGreeter);
 
     { M4a procedural equivalent (kept in a comment for reference):
-        THorseGrpc.RegisterMethod('/greeter.Greeter/Greet',
+        TGrpcRegistry.RegisterMethod('/greeter.Greeter/Greet',
           TGreetRequest, TGreetResponse, GreeterService.Greet);
-        THorseGrpc.RegisterMethod('/greeter.Greeter/Echo',
+        TGrpcRegistry.RegisterMethod('/greeter.Greeter/Echo',
           TEchoRequest, TEchoResponse, GreeterService.Echo);
     }
 
@@ -112,15 +112,15 @@ begin
       RegisterService<T>: a streaming RPC returns a sequence, not a value, so
       it has no natural IInvokable shape to reflect over. AResponseClass is the
       type of EACH streamed message. }
-    THorseGrpc.RegisterServerStream('/greeter.Greeter/ListGreetings',
+    TGrpcRegistry.RegisterServerStream('/greeter.Greeter/ListGreetings',
       TGreetRequest, TGreetResponse, GreeterService.ListGreetings);
 
     { M6b — the two inbound-streaming shapes. Registering either makes the
       transport dispatch that path on HEADERS instead of END_STREAM, so the
       handler runs while the peer is still sending. }
-    THorseGrpc.RegisterClientStream('/greeter.Greeter/JoinNames',
+    TGrpcRegistry.RegisterClientStream('/greeter.Greeter/JoinNames',
       TGreetRequest, TGreetResponse, GreeterService.JoinNames);
-    THorseGrpc.RegisterBidiStream('/greeter.Greeter/ChatGreetings',
+    TGrpcRegistry.RegisterBidiStream('/greeter.Greeter/ChatGreetings',
       TGreetRequest, TGreetResponse, GreeterService.ChatGreetings);
 
     // Regular HTTP route — proves non-gRPC traffic still routes normally.
@@ -160,7 +160,7 @@ begin
     end
     else
       WriteLn('HorseNghttp2GrpcDemo — h2c on port ', LPort);
-    WriteLn('Registered gRPC methods: ', THorseGrpc.Count);
+    WriteLn('Registered gRPC methods: ', TGrpcRegistry.Count);
     WriteLn('Try (local):');
     { grpcurl needs -import-path pointing at the SOURCE tree. The old hint
       printed `-proto greeter.proto` with no path, which cannot resolve: this

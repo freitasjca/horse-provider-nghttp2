@@ -55,14 +55,14 @@ type
   TGrpcMethodInfo = Nghttp2.Grpc.Registry.TGrpcMethodInfo
     deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
 
-  EHorseGrpcRegistry = Nghttp2.Grpc.Registry.EHorseGrpcRegistry
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+  EHorseGrpcRegistry = Nghttp2.Grpc.Registry.EGrpcRegistry
+    deprecated 'Moved and renamed: use Nghttp2.Grpc.Registry.EGrpcRegistry. Removed in 2.0.0.';
 
   { The registry itself — RegisterMethod, RegisterService<T>,
     RegisterServerStream, RegisterClientStream, RegisterBidiStream,
     IsInboundStreaming, TryGet, Count, Shutdown. }
-  THorseGrpc = Nghttp2.Grpc.Registry.THorseGrpc
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Registry. Removed in 2.0.0.';
+  THorseGrpc = Nghttp2.Grpc.Registry.TGrpcRegistry
+    deprecated 'Moved and renamed: use Nghttp2.Grpc.Registry.TGrpcRegistry. Removed in 2.0.0.';
 
 implementation
 

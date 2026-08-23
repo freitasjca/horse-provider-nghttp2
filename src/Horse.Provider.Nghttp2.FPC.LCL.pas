@@ -59,7 +59,7 @@ type
     destructor  Destroy; override;
     { Set this BEFORE Loaded fires (typically in the .lfm) so the
       auto-start uses the right port. Default 9200 matches
-      THorseNghttp2Config.Default.Port. }
+      TNghttp2Config.Default.Port. }
     property Port: Integer read FPort write FPort default 9200;
     { Set False to suppress the auto Listen in FormCreate — useful if the
       app needs to register routes asynchronously before binding. }
@@ -79,7 +79,7 @@ uses
 constructor TfrmHorseNghttp2LCLHost.Create(TheOwner: TComponent);
 begin
   inherited Create(TheOwner);
-  FPort      := 9200;   // matches THorseNghttp2Config.Default.Port
+  FPort      := 9200;   // matches TNghttp2Config.Default.Port
   FAutoStart := True;
   OnCreate := @DoFormCreate;
   OnClose  := @DoFormClose;

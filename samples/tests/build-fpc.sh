@@ -1114,7 +1114,45 @@ fi
 # collapse to ~0 ms, not a 20% drift.
 echo
 echo "── 15  streaming delivers incrementally (curl -N timing) ───────────────"
-if ! command -v curl >/dev/null 2>&1; then
+# ── Horse core prerequisite ─────────────────────────────────────────────────
+# Streaming needs HORSE_PROVIDER_NGHTTP2 named in the guard around
+# Horse.Response's default stream-writer registration. FStreamWriterFactory is
+# a last-writer-wins class var written from TWO unit initialization sections —
+# this provider's and Horse.Response's WebBroker default — and which one wins
+# is decided by the compiler's dependency walk, not by anything in the source.
+#
+# Omit the define and the WebBroker default can win, at which point every
+# streaming request on this transport answers with total silence: no headers,
+# no body, client waits until it gives up.
+#
+# It is worth spelling out how expensive that is to diagnose, because it is why
+# this gate exists. On 2026-08-23 the missing guard produced NINE failing
+# stages on FPC 3.2.2 — 5, 9, 10, 12, 13, 14 (the 106-check client hanging on
+# check 33, /stream/pull) plus 15 and 16 — and every one of them read as a
+# protocol or transport defect. Trunk was green throughout, because there the
+# initialization order happened to favour the provider. A race you are winning
+# is not a race you have fixed.
+if ! horse_fix_present "$HORSE/Horse.Response.pas" 'NOT DEFINED(HORSE_PROVIDER_NGHTTP2)'; then
+  fail "streaming prerequisites — Horse core is missing the stream-writer guard"
+  echo "  ── this is a TREE problem, not a streaming defect ───────────"
+  echo "    FIX-STREAM-FACTORY  $HORSE/Horse.Response.pas"
+  echo
+  echo "    Its initialization section registers the WebBroker default writer"
+  echo "    unless every provider that supplies its own is excluded. Add the"
+  echo "    fourth clause to that {\$IF}:"
+  echo "      {\$IF NOT DEFINED(HORSE_PROVIDER_IOCP) AND"
+  echo "           NOT DEFINED(HORSE_PROVIDER_HTTPSYS) AND"
+  echo "           NOT DEFINED(HORSE_PROVIDER_EPOLL) AND"
+  echo "           NOT DEFINED(HORSE_PROVIDER_NGHTTP2)}"
+  echo
+  echo "    Edit it IN PLACE — do not copy patches/horse/src/Horse.Response.pas"
+  echo "    over it. That copy is LF while the checkout is CRLF, so a whole-file"
+  echo "    diff reports ~2700 changed lines and hides that the real difference"
+  echo "    is this clause plus its comment."
+  echo
+  echo "    Expect stages 5/9/10/12/13/14 to hang too until this is applied;"
+  echo "    they stop at check 33, /stream/pull."
+elif ! command -v curl >/dev/null 2>&1; then
   skip "curl not installed — cannot observe frame arrival timing"
 elif ! wait_port_free "$PORT" 15; then
   skip "port $PORT still bound"

@@ -114,7 +114,7 @@ type
       AStatus: Integer; const AMessage: string); static;
 
     class procedure InternalListen(APort: Integer;
-      const AConfig: THorseNghttp2Config); static;
+      const AConfig: TNghttp2Config); static;
 
   public
     // Framework contract (1): Multi-Instance resolver needs the physical port.
@@ -286,7 +286,7 @@ uses
     the HTTP/2 transport without it; everything else in this provider works
     unchanged. Delphi and FPC trunk leave the define unset and lose nothing. }
   Nghttp2.Grpc.Dispatcher,                  { M4a: intercept application/grpc* before Horse routing }
-  Nghttp2.Grpc.Registry,                    { M6b: THorseGrpc.IsInboundStreaming — see ShouldStreamInboundTrampoline }
+  Nghttp2.Grpc.Registry,                    { M6b: TGrpcRegistry.IsInboundStreaming — see ShouldStreamInboundTrampoline }
 {$IFEND}
   Horse.Core.WebSocket,                     { WS-8441: THorseWebSocketUpgrader service key }
   Horse.Provider.Nghttp2.WebSocket,         { WS-8441: TNghttp2WebSocketUpgrader }
@@ -430,7 +430,7 @@ begin
   // for zero-overhead protobuf dispatch. Returns True when the request was
   // handled; False → fall through to normal Horse routing.
 {$IF NOT DEFINED(HORSE_NGHTTP2_NO_GRPC)}
-  if THorseGrpcDispatcher.TryDispatch(AStream) then
+  if TGrpcDispatcher.TryDispatch(AStream) then
     Exit;
 {$IFEND}
 
@@ -494,9 +494,9 @@ end;
 // ─── Listen / ListenWithConfig ───────────────────────────────────────────
 
 class procedure THorseProviderNghttp2.InternalListen(APort: Integer;
-  const AConfig: THorseNghttp2Config);
+  const AConfig: TNghttp2Config);
 var
-  LConfig:  THorseNghttp2Config;
+  LConfig:  TNghttp2Config;
   LThreads: Integer;
 begin
   // Dynamic-load libnghttp2 at first Listen.  Was a link-time dependency
@@ -612,10 +612,10 @@ end;
 class procedure THorseProviderNghttp2.ListenWithConfig(const APort: Integer;
   const AConfig: THorseCrossSocketConfig);
 var
-  LNghttp2Config: THorseNghttp2Config;
+  LNghttp2Config: TNghttp2Config;
 begin
   // Translate the shared cross-provider config to nghttp2's own record.
-  LNghttp2Config      := THorseNghttp2Config.Default;
+  LNghttp2Config      := TNghttp2Config.Default;
   LNghttp2Config.Port := Word(APort);
 
   // Pool sizing, most specific source first.
@@ -907,7 +907,7 @@ begin
     this configuration. }
   Result := False;
 {$ELSE}
-  Result := THorseGrpc.IsInboundStreaming(AStream.Header[':path']);
+  Result := TGrpcRegistry.IsInboundStreaming(AStream.Header[':path']);
 {$IFEND}
 
 end;

@@ -7,13 +7,13 @@ unit Sample.Greeter.Service;
 //
 //  1. **TGreeterService (M4a procedural)** — plain methods matching
 //     `procedure(AReq, AResp: TObject) of object`. Used with
-//     `THorseGrpc.RegisterMethod(...)`. Instance is created at unit init.
+//     `TGrpcRegistry.RegisterMethod(...)`. Instance is created at unit init.
 //     Kept intact for backward-compat testing and as a working alternative
 //     if you want to skip interface RTTI ceremony.
 //
 //  2. **TGreeterServiceImpl (M4c IInvokable)** — implements IGreeter,
 //     methods return NEW response instances. Used with
-//     `THorseGrpc.RegisterService<IGreeter>(...)`.
+//     `TGrpcRegistry.RegisterService<IGreeter>(...)`.
 //     `_AddRef`/`_Release` return -1 per horse-grpc SKILL §2 — prevents
 //     ARC from destroying the instance during RTTI dispatch.
 // ============================================================================

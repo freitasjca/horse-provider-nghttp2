@@ -28,8 +28,8 @@ uses
 type
   { TryDispatch(AStream): True when the request was application/grpc* and has
     been fully answered — response body plus grpc-status trailer. }
-  THorseGrpcDispatcher = Nghttp2.Grpc.Dispatcher.THorseGrpcDispatcher
-    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Dispatcher. Removed in 2.0.0.';
+  THorseGrpcDispatcher = Nghttp2.Grpc.Dispatcher.TGrpcDispatcher
+    deprecated 'Moved and renamed: use Nghttp2.Grpc.Dispatcher.TGrpcDispatcher. Removed in 2.0.0.';
 
 const
   { Standard gRPC status codes — the subset this dispatcher emits. }

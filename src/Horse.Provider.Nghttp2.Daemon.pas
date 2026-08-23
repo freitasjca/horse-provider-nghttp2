@@ -77,7 +77,7 @@ type
     destructor  Destroy; override;
     { Set this BEFORE the service starts (in ServiceCreate, typically) so
       the worker thread binds the intended port. Default 9200 matches
-      THorseNghttp2Config.Default.Port. }
+      TNghttp2Config.Default.Port. }
     property Port: Integer read FPort write FPort default 9200;
   end;
 {$ENDIF MSWINDOWS}
