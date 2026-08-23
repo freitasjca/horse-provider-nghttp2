@@ -3,58 +3,34 @@ unit Horse.Provider.Nghttp2.Grpc.Attributes;
 {$IF DEFINED(FPC)}{$MODE DELPHI}{$H+}{$ENDIF}
 
 // ============================================================================
-//  Horse.Provider.Nghttp2.Grpc.Attributes
-//  M4c (2026-08-09): attribute types for the IInvokable-based ergonomic API.
+//  Horse.Provider.Nghttp2.Grpc.Attributes — COMPATIBILITY SHIM
 //
-//  `[TGrpcService('greeter.Greeter')]` marks an interface as a gRPC service.
-//  `THorseGrpc.RegisterService<T>` reads this attribute to compose method
-//  paths as `/<Name>/<MethodName>` per gRPC-over-HTTP/2 spec.
+//  The real unit is Nghttp2.Grpc.Attributes in Delphi-nghttp2 (>= 1.5.0). The
+//  gRPC layer moved there on 2026-08-23 because it never depended on Horse —
+//  only its unit name did. This shim exists so 1.4.x code keeps compiling.
 //
-//  Naming: T-prefix, `Attribute` suffix. Delphi strips ONLY the `Attribute`
-//  suffix, NOT the T prefix — so use `[TGrpcService('...')]` (not
-//  `[GrpcService('...')]`). See delphi-standards §11 / delphi-pitfalls §14.
+//  Migration: change `uses Horse.Provider.Nghttp2.Grpc.Attributes` to
+//  `uses Nghttp2.Grpc.Attributes`. Nothing else changes.
+//
+//  REMOVED IN 2.0.0, together with the THorse* type-name renames that are the
+//  other half of this deprecation window. Do not add anything here.
+//
+//  These are ALIASES, not wrappers — the identifier below denotes the very
+//  same class as the one in the library. That matters for attributes
+//  specifically: RTTI records the actual attribute class, so the registry's
+//  `LAttr is TGrpcServiceAttribute` test succeeds whichever name the
+//  declaration site used. A wrapper class would have broken exactly that.
 // ============================================================================
 
 interface
 
 uses
-{$IF DEFINED(FPC)}
-  // FPC 3.2.2: TCustomAttribute is in the Rtti unit (not SysUtils as on Delphi)
-  SysUtils, Rtti
-{$ELSE}
-  System.SysUtils
-{$IFEND}
-  ;
+  Nghttp2.Grpc.Attributes;
 
 type
-  // Marks an interface as a gRPC service. AName is the full
-  // <package>.<Service> path per the gRPC spec (e.g. 'greeter.Greeter').
-  // Registry composes method paths as '/' + AName + '/' + MethodName.
-  //
-  // Example:
-  //   [TGrpcService('greeter.Greeter')]
-  //   IGreeter = interface(IInvokable)
-  //     ['{...GUID...}']
-  //     function Greet(const ARequest: TGreetRequest): TGreetResponse;
-  //   end;
-  //
-  // (Comment uses // per line — Delphi block comments {} and (* *) don't
-  // nest, and both would fire on the GUID literal above. See memory
-  // entry feedback_delphi_brace_comment_nesting.)
-  TGrpcServiceAttribute = class(TCustomAttribute)
-  strict private
-    FName: string;
-  public
-    constructor Create(const AName: string);
-    property Name: string read FName;
-  end;
+  TGrpcServiceAttribute = Nghttp2.Grpc.Attributes.TGrpcServiceAttribute
+    deprecated 'Moved to Delphi-nghttp2: use Nghttp2.Grpc.Attributes. Removed in 2.0.0.';
 
 implementation
-
-constructor TGrpcServiceAttribute.Create(const AName: string);
-begin
-  inherited Create;
-  FName := AName;
-end;
 
 end.

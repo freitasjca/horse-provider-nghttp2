@@ -70,10 +70,54 @@ TRUNK=${TRUNK_FPC:-/usr/local/fpc-trunk/bin/fpc}
 TU=${TRUNK_UNITS:-/usr/local/fpc-trunk/lib/fpc/3.3.1/units/x86_64-linux}
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/../../../../" && pwd)"
+
+# ROOT is found by WALKING UP until a directory actually contains the sources,
+# not by counting levels. This script lives at
+#   <workspace>/patches/horse-provider-nghttp2/samples/tests/
+# and the fixed `../../../../` it used to apply is correct only there. The same
+# file is also copied into the deployed repo at
+#   /mnt/c/lang/Repo/horse-provider-nghttp2/samples/tests/
+# where four levels up is /mnt/c/lang — a real directory with no patches/ in
+# it. So the old form did not fail; it silently produced a wrong ROOT, and the
+# first symptom arrived four lines later as `Cannot open file
+# "Nghttp2.Socket.pas"` under stage 1's advice about the BaseUnix uses clause.
+# Twenty minutes of reading the wrong unit.
+#
+# The probe is `patches/Delphi-nghttp2/src` rather than `patches/`: a stray
+# empty patches/ directory anywhere up the tree would satisfy the looser test
+# and put us right back to a plausible wrong answer.
+find_root() {
+  local dir="$1"
+  while [[ "$dir" != "/" ]]; do
+    [[ -d "$dir/patches/Delphi-nghttp2/src" ]] && { printf '%s' "$dir"; return 0; }
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+if ! ROOT="$(find_root "$SCRIPT_DIR")"; then
+  echo "ERROR: cannot locate the workspace root from $SCRIPT_DIR" >&2
+  echo >&2
+  echo "  Walked up from this script looking for patches/Delphi-nghttp2/src" >&2
+  echo "  and found none. The usual cause is running the copy that lives in a" >&2
+  echo "  DEPLOYED REPO rather than the one in the workspace tree — the sources" >&2
+  echo "  are edited in patches/ and copied out, so only the workspace copy has" >&2
+  echo "  anything above it to find." >&2
+  echo >&2
+  echo "  Run it from the workspace instead:" >&2
+  echo "    <workspace>/patches/horse-provider-nghttp2/samples/tests/build-fpc.sh" >&2
+  exit 1
+fi
+
 PROV="$ROOT/patches/horse-provider-nghttp2/src"
 DNG="$ROOT/patches/Delphi-nghttp2/src"
 HORSE="$ROOT/horse/src"
+
+# DNG is proven by find_root; these two are not, and a missing one would again
+# surface as a compile error about the first unit that needed it.
+for _d in "$PROV" "$HORSE"; do
+  [[ -d "$_d" ]] || { echo "ERROR: source directory not found: $_d" >&2; exit 1; }
+done
 
 COMPILE_ONLY=0
 [[ "${1:-}" == "--compile-only" ]] && COMPILE_ONLY=1
@@ -216,6 +260,33 @@ run_client_suite() {
   grep -E "passed, .* failed" "$WORK/$logname.log" | tail -1 | sed 's/^/    /'
 }
 
+# horse_fix_present <file> <must-contain> [<must-not-contain>]
+#   0 = the fix is in that file, 1 = it is not.
+#
+# Probes the FIX'S OWN CODE, never file identity or a comment marker. Two
+# earlier attempts at this check were wrong for instructive reasons and are
+# recorded so they are not retried:
+#
+#   * `diff` against patches/horse/src/ — reports every unrelated drift as a
+#     missing fix, and says nothing at all if patches/ is the stale copy.
+#   * grepping `AConnection: THorseWebSocketConnection` — present 4 times in
+#     the UNPATCHED file (THorseWebSocketHeartbeat.Create takes one), so it
+#     passes on a tree that has neither fix. Verified against the real
+#     unpatched blob (`git show HEAD:src/...`), the discriminating forms are
+#     the FeedBytes parameter list and the absence of the hard cast.
+#
+# A missing file counts as a missing fix: an absent core unit is not a tree
+# this stage can say anything about.
+horse_fix_present() {
+  local file=$1 present=$2 absent=${3:-}
+  [[ -f "$file" ]] || return 1
+  grep -qF -- "$present" "$file" || return 1
+  if [[ -n "$absent" ]] && grep -qF -- "$absent" "$file"; then
+    return 1
+  fi
+  return 0
+}
+
 compile_unit() {   # <label> <source-path>
   # Separate statements on purpose. In a single `local a=$1 b=$2 c="...$b..."`
   # bash expands every word before the builtin runs, so $b is still unset when
@@ -224,12 +295,51 @@ compile_unit() {   # <label> <source-path>
   local label=$1
   local src=$2
   local log="$WORK/$(basename "$src").log"
+
+  # Existence first. Handing fpc a path that is not there produces "Fatal:
+  # Cannot open file" — which looks exactly like a compile failure, gets the
+  # stage's own diagnostic advice printed over it, and sends you reading the
+  # unit's uses clause for a file the compiler never opened. A missing source
+  # is a harness fault, and it says so.
+  if [[ ! -f "$src" ]]; then
+    fail "$label"
+    echo "  ── source not found ─────────────────────────────────────────"
+    echo "    $src"
+    echo "    This is a PATH problem, not a compile error — nothing was"
+    echo "    compiled. Check ROOT resolution above, not the unit."
+    return 1
+  fi
+
   echo "  compiling $label ..."
   if $TRUNK $FLAGS $OUT "$src" > "$log" 2>&1; then
     pass "$label"
     return 0
   fi
   fail "$label"
+
+  # A wrong TRUNK_UNITS is not a code failure, and it does not look like one.
+  # FLAGS carries -n, so /etc/fpc.cfg is suppressed and every RTL path has to
+  # come from $TU. Point $TU somewhere that does not exist and the compiler
+  # cannot even find `system` — which lands under whichever stage ran first,
+  # wearing that stage's diagnostic advice. Bitten twice: recorded in
+  # plans/fpc-322-compatibility.md on 2026-08-22, then again on 2026-08-23 from
+  # a stale path in docs/running_teste.md. Debian and Ubuntu use the multiarch
+  # location, /usr/lib/x86_64-linux-gnu/fpc/<ver>/units/<target>.
+  if grep -q "Can't find unit system" "$log"; then
+    echo "  ── toolchain path, not code ─────────────────────────────────"
+    echo "    The compiler cannot find its own RTL, so nothing was compiled."
+    echo "    TRUNK_UNITS=$TU"
+    echo "    Expected an rtl/ directory under it:  $TU/rtl"
+    echo
+    echo "    Find the right one (find, not a glob — in zsh an unmatched glob"
+    echo "    is a hard error that abandons the whole command line, so a bare"
+    echo "    \`ls /usr/lib/*/fpc/...\` reports nothing rather than searching):"
+    echo "      find /usr -name system.ppu -path '*fpc*' 2>/dev/null"
+    echo "    TRUNK_UNITS is that file's directory with /rtl removed."
+    echo "  ── full log: $log ───────────────────────────────────────────"
+    return 1
+  fi
+
   echo "  ── first errors ─────────────────────────────────────────────"
   grep -E "Error|Fatal" "$log" | head -12 | sed 's/^/    /'
   echo "  ── full log: $log ───────────────────────────────────────────"
@@ -265,6 +375,40 @@ compile_unit "Nghttp2.Engine.Epoll.pas" "$DNG/Nghttp2.Engine.Epoll.pas" || true
   # compiler that runs most often. Same reason stage 2 names the epoll unit at
   # all — nothing references either, so an unnamed engine is never compiled.
   compile_unit "Nghttp2.Engine.Iocp.pas" "$DNG/Nghttp2.Engine.Iocp.pas" || true
+
+# ── 2b · the 1.4.x compatibility shims ───────────────────────────────────────
+# The gRPC layer moved to Delphi-nghttp2 on 2026-08-23; these five units keep
+# the old `Horse.Provider.Nghttp2.Grpc.*` names resolving until 2.0.0. They are
+# pure type aliases, so nothing in this repository references them — the
+# provider and the samples both use the library units directly.
+#
+# Which is precisely why they are named here. An unreferenced unit is never
+# compiled, and an UNCOMPILED SHIM IS WORSE THAN NO SHIM: it promises 1.4.x
+# code still builds while nobody has checked that it does. This repo has
+# shipped that mistake before, in a test that skipped itself on FPC for months
+# while reporting green.
+#
+# Compiling them also proves the thing the alias design rests on — that
+# `TFoo = OtherUnit.TFoo` resolves on FPC as well as Delphi, for classes,
+# interfaces, records, method-pointer types, exception classes and constants
+# alike. If any of those forms is rejected, it fails here rather than in a
+# user's build.
+echo
+echo "── 2b Horse.Provider.Nghttp2.Grpc.* (deprecated shims → library) ───────"
+if [[ "$GRPC_SUPPORTED" -eq 0 ]]; then
+  # The shims alias the gRPC layer, so they follow it: on 3.2.x that layer is
+  # compiled out by -dHORSE_NGHTTP2_NO_GRPC because Rtti has no
+  # TCustomAttribute, and an alias cannot outlive the type it names. Skipping
+  # is correct here, and it must be an EXPLICIT skip for the same reason
+  # stage 11's is — a stage that quietly vanished on the compiler Horse's own
+  # CI installs would let the suite report green while testing nothing.
+  skip "FPC $FPCVER — shims alias the gRPC layer, which needs trunk 3.3.1"
+else
+  for shim in Attributes Registry Dispatcher StreamWriter StreamReader; do
+    compile_unit "Horse.Provider.Nghttp2.Grpc.$shim.pas" \
+                 "$PROV/Horse.Provider.Nghttp2.Grpc.$shim.pas" || true
+  done
+fi
 
 # ── 3 / 4 · whole programs ───────────────────────────────────────────────────
 echo
@@ -1151,7 +1295,53 @@ if [[ -z "${WS_PYTHON:-}" && -x .venv/bin/python ]]; then
 fi
 WS_PYTHON=${WS_PYTHON:-python3}
 
-if ! command -v "$WS_PYTHON" > /dev/null 2>&1 && [[ ! -x "$WS_PYTHON" ]]; then
+# ── Horse core prerequisites ────────────────────────────────────────────────
+# RECEIVING a WebSocket frame needs two fixes that are NOT on Horse's master
+# branch — they live on their own branches and in patches/horse/src/. Without
+# them this stage fails in a way that reads as a WebSocket defect and is not:
+#
+#   FIX-WS-CAST      Horse.Core.WebSocket.pas — FeedBytes took the connection
+#                    as an INTERFACE and hard-cast it back to the class. An
+#                    interface reference points at the interface VMT slot
+#                    inside the object, not at the object, so on FPC every
+#                    field read lands at the wrong address and FOnMessage
+#                    never looks assigned. Symptom: 'masked client frame
+#                    round-tripped' fails with `got []`.
+#   FIX-WS-NONBLOCK  Horse.Provider.Socket.WebSocket.pas — Read treated EAGAIN
+#                    as a disconnect. epoll sets O_NONBLOCK on every accepted
+#                    socket, so the read loop exits about a millisecond after
+#                    the upgrade. Symptom: 'exchange completed' times out.
+#
+# SENDING works without either, which is why the first three sub-checks pass
+# and this looks like a partial WebSocket failure rather than a wrong tree.
+# That combination cost a debugging session on 2026-08-23; hence this gate.
+#
+# It FAILS rather than skips. A skip here would report "0 failed" on a tree
+# where WebSocket receive is known-broken, which is precisely the shape of the
+# FPC test that skipped itself for months while the summary stayed green.
+WS_CORE_MISSING=()
+horse_fix_present "$HORSE/Horse.Core.WebSocket.pas" \
+  'ALength: Integer; const AConnection: THorseWebSocketConnection' \
+  'THorseWebSocketConnection(AConnection).FOn' \
+  || WS_CORE_MISSING+=("FIX-WS-CAST      $HORSE/Horse.Core.WebSocket.pas")
+horse_fix_present "$HORSE/Horse.Provider.Socket.WebSocket.pas" \
+  'WS_SOCKET_READ_TICK_MS' \
+  || WS_CORE_MISSING+=("FIX-WS-NONBLOCK  $HORSE/Horse.Provider.Socket.WebSocket.pas")
+
+if (( ${#WS_CORE_MISSING[@]} > 0 )); then
+  fail "WS-8441 prerequisites — Horse core is missing the receive-path fixes"
+  echo "  ── this is a TREE problem, not a WebSocket defect ───────────"
+  printf '    %s\n' "${WS_CORE_MISSING[@]}"
+  echo
+  echo "    The stage was NOT run; a result from this tree would be"
+  echo "    meaningless. Apply the patches:"
+  echo "      cp $ROOT/patches/horse/src/Horse.Core.WebSocket.pas \\"
+  echo "         $ROOT/patches/horse/src/Horse.Provider.Socket.WebSocket.pas \\"
+  echo "         $HORSE/"
+  echo "    or switch the horse checkout to a branch carrying both"
+  echo "    (nghttp2-required has them; each fix/websocket-* branch has"
+  echo "    only one, so neither alone is enough)."
+elif ! command -v "$WS_PYTHON" > /dev/null 2>&1 && [[ ! -x "$WS_PYTHON" ]]; then
   skip "python not found at '$WS_PYTHON' — set WS_PYTHON=/path/to/python"
 elif ! "$WS_PYTHON" -c "import h2" 2>/dev/null; then
   skip "h2 not installed for $WS_PYTHON"

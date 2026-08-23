@@ -31,7 +31,7 @@ interface
 {$ENDIF}
 
 uses
-  Horse.Provider.Nghttp2.Grpc.Attributes,   { TGrpcServiceAttribute }
+  Nghttp2.Grpc.Attributes,   { TGrpcServiceAttribute }
   Sample.Greeter.Messages;                  { message classes }
 
 type

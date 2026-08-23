@@ -57,7 +57,7 @@ uses
 {$IFEND}
   Horse,
   Horse.Provider.Nghttp2,
-  Horse.Provider.Nghttp2.Grpc.Registry,
+  Nghttp2.Grpc.Registry,
   Horse.Provider.Config,                     { THorseCrossSocketConfig with SSL* fields (TLS/mTLS modes) }
   Sample.Greeter.Interfaces,                 { M4c: IGreeter interface + [TGrpcService] }
   Sample.Greeter.Messages,

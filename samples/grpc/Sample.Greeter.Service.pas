@@ -30,7 +30,7 @@ uses
 {$IFEND}
   Sample.Greeter.Interfaces,
   Sample.Greeter.Messages,
-  Horse.Provider.Nghttp2.Grpc.Registry;   { IGrpcStreamWriter — M6a }
+  Nghttp2.Grpc.Registry;   { IGrpcStreamWriter — M6a }
 
 type
   { M4a — procedural handlers (still supported by the registry). }

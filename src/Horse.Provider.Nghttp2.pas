@@ -276,12 +276,17 @@ uses
   Horse.Provider.Nghttp2.WebResponseAdapter,
   Horse.Provider.Nghttp2.StreamWriter,      { STREAM-1: registers the Res.SendStream writer in its initialization }
 {$IF NOT DEFINED(HORSE_NGHTTP2_NO_GRPC)}
-  { FPC-322: the gRPC layer needs extended RTTI — TCustomAttribute, which FPC
+  { The gRPC layer lives in Delphi-nghttp2 (>= 1.5.0), not here — it only ever
+    took an INghttp2Stream, so it was moved down on 2026-08-23 where any host
+    can reach it. These two units are the whole of this provider's gRPC
+    involvement.
+
+    FPC-322: that layer needs extended RTTI — TCustomAttribute, which FPC
     3.2.2's Rtti unit does not declare. Define HORSE_NGHTTP2_NO_GRPC to compile
     the HTTP/2 transport without it; everything else in this provider works
     unchanged. Delphi and FPC trunk leave the define unset and lose nothing. }
-  Horse.Provider.Nghttp2.Grpc.Dispatcher,   { M4a: intercept application/grpc* before Horse routing }
-  Horse.Provider.Nghttp2.Grpc.Registry,     { M6b: THorseGrpc.IsInboundStreaming — see ShouldStreamInboundTrampoline }
+  Nghttp2.Grpc.Dispatcher,                  { M4a: intercept application/grpc* before Horse routing }
+  Nghttp2.Grpc.Registry,                    { M6b: THorseGrpc.IsInboundStreaming — see ShouldStreamInboundTrampoline }
 {$IFEND}
   Horse.Core.WebSocket,                     { WS-8441: THorseWebSocketUpgrader service key }
   Horse.Provider.Nghttp2.WebSocket,         { WS-8441: TNghttp2WebSocketUpgrader }

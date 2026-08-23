@@ -190,7 +190,7 @@ untouched.
 ## Related
 
 - `plans/horse-grpc-nghttp2.md` — full milestone plan (M1 → M6)
-- `patches/horse-provider-nghttp2/src/Horse.Provider.Nghttp2.Grpc.Registry.pas` — the `THorseGrpc` API surface
-- `patches/horse-provider-nghttp2/src/Horse.Provider.Nghttp2.Grpc.Dispatcher.pas` — 5-byte framing + trailer emission
+- `patches/Delphi-nghttp2/src/Nghttp2.Grpc.Registry.pas` — the `THorseGrpc` API surface
+- `patches/Delphi-nghttp2/src/Nghttp2.Grpc.Dispatcher.pas` — 5-byte framing + trailer emission
 - `.claude/skills/delphi-grpc/SKILL.md` — Delphi/gRPC patterns
 - `.claude/skills/delphi-http2/SKILL.md` §6 — HTTP/2 trailer plumbing
