@@ -120,6 +120,7 @@ goto :t_named
 call :build "!ROOT!\samples\tests" HorseNghttp2TestServer
 call :build "!ROOT!\samples\tests" HorseNghttp2TestClient
 call :build "!ROOT!\samples\tests" HorseNghttp2TlsTestServer
+call :build "!ROOT!\samples\tests" HorseNghttp2AdmitProbe
 goto :summary
 
 :t_grpc
@@ -131,6 +132,7 @@ goto :summary
 call :build "!ROOT!\samples\tests" HorseNghttp2TestServer
 call :build "!ROOT!\samples\tests" HorseNghttp2TestClient
 call :build "!ROOT!\samples\tests" HorseNghttp2TlsTestServer
+call :build "!ROOT!\samples\tests" HorseNghttp2AdmitProbe
 call :build "!ROOT!\samples\grpc"  HorseNghttp2GrpcDemo
 call :build "!ROOT!\samples\grpc"  HorseNghttp2GrpcTestClient
 goto :summary
