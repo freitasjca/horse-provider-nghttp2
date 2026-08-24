@@ -372,11 +372,37 @@ passes against a client that happens to send them that way and corrupts
 against every real one. Check 05 sends three messages in a single body for
 exactly that reason, and asserts the server reports having read three.
 
-Two guards worth knowing: a single message is capped at **4 MB** (a corrupt
-4-byte length prefix would otherwise let a peer make the server allocate up to
-4 GB before a payload byte is validated), and a half-close with a partial
-message still buffered **raises** rather than returning cleanly — otherwise a
-truncated stream is indistinguishable from a short one.
+### Decoder guards
+
+**A single message is capped at 4 MB.** A corrupt 4-byte length prefix would
+otherwise let a peer make the server allocate up to 4 GB before a payload byte is
+validated.
+
+> **Corrected 2026-08-24.** Until then this paragraph described the cap as though
+> it applied everywhere. It did not — it was enforced on the **streaming** path
+> only, and the unary path had no cap at all, so the 4 GB scenario described here
+> was live. Worse, `StripGrpcPrefix` cast the wire-supplied length through
+> `Integer`, so a prefix of `FF FF FF FF` became `-1`, the truncation guard
+> evaluated to `4` and passed, and the copy then read past the buffer. On an
+> unfixed build a **six-byte** request produced an access violation after a 2 GB
+> out-of-bounds heap read. The cap now applies to both paths and is tested before
+> any signed arithmetic. See `Nghttp2ProtobufNegativeTests`.
+>
+> **This is a behaviour change on the unary path**: a unary message larger than
+> 4 MB is now rejected where it previously went through. Split it, stream it, or
+> raise `GRPC_MAX_MESSAGE_BYTES` in `Nghttp2.Grpc.StreamReader` if your deployment
+> genuinely needs larger single messages.
+
+**Submessage nesting is capped at 100 levels.** `Deserialize` recurses once per
+nested submessage, so a self-referential message type — which is how protobuf
+expresses trees and linked lists, i.e. routinely — lets a payload of nothing but
+nested length prefixes drive recursion until the stack is exhausted. Stack
+exhaustion is not catchable. 100 is the default mainstream protobuf
+implementations use; real messages do not approach it.
+
+**A half-close with a partial message still buffered raises** rather than
+returning cleanly — otherwise a truncated stream is indistinguishable from a
+short one.
 
 ## Limitations (v1.0.0)
 
