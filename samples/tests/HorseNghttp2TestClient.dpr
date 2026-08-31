@@ -831,6 +831,31 @@ begin
   Check('server healthy after SSE',
     (R.Status = 200) and (R.Body = 'pong'),
     Format('%d / %s', [R.Status, R.Body]));
+
+  // ─── 38 ────────────────────────────────────────────────────────────────
+  // FIX-BINBODY-1. Payload is every byte value 0..255 — guaranteed invalid
+  // UTF-8 (NUL, lone continuation bytes, truncated multi-byte leaders).
+  // Before the fix this returned 500 for ANY binary body, which on this
+  // transport includes every protobuf and gRPC payload.
+  //
+  // The "sum" assertion is the load-bearing one: it fails if the body is
+  // truncated, read from the wrong offset, or if GetContent left the shared
+  // non-owning stream at EOF (the rewind half of the fix).
+  Section('38  POST /body/binary  (FIX-BINBODY-1 — arbitrary bytes 0..255)');
+  SetLength(LFileBytes, 256);
+  for I := 0 to 255 do
+    LFileBytes[I] := Byte(I);
+  R := DoRequest('POST', '/body/binary', nil, LFileBytes);
+  Check('status 200 — binary body did not raise EEncodingError',
+    R.Status = 200, IntToStr(R.Status) + ' / ' + R.Body);
+  Check('all 256 bytes reached the handler',
+    Pos('"size":256', R.Body) > 0, R.Body);
+  Check('bytes intact after the text accessor read the stream',
+    Pos('"sum":32640', R.Body) > 0, R.Body);
+  R := DoRequest('GET', '/ping', nil, nil);
+  Check('server healthy after binary body',
+    (R.Status = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.Status, R.Body]));
 end;
 
 // ─── URL parser ─────────────────────────────────────────────────────────

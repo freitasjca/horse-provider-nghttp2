@@ -314,6 +314,51 @@ begin
      .Send(Format('{"size":%d,"body":"%s"}', [Length(LBody), JsonEsc(LBody)]));
 end;
 
+{ FIX-BINBODY-1 — a binary request body must not abort the request.
+
+  A body of arbitrary bytes (0..255) is deliberately not valid UTF-8. Before
+  FIX-BINBODY-1, TNghttp2RawRequest.GetContent decoded the body eagerly with
+  TEncoding.UTF8.GetString, which raises EEncodingError ('No mapping for the
+  Unicode character exists in the target multi-byte code page') when a
+  non-empty input decodes to zero chars. That fired inside the request bridge,
+  so the request died with a 500 before this handler ran — which matters
+  doubly here, since gRPC and protobuf payloads are binary by definition.
+
+  Read order is deliberate: the text accessor runs FIRST, so Body<TStream> then
+  has to survive what it did to the stream. GetContent used to read the shared
+  non-owning stream to EOF without rewinding, leaving a later Body<TStream>
+  reader with Size bytes but nothing to read. "sum" is what catches that — a
+  size-only check passes against a stream that yields no bytes.
+
+  textLen is reported but not asserted: degrading to '' is correct-but-
+  incidental, and pinning it would make the test compiler-specific. }
+procedure BinaryBody(Req: THorseRequest; Res: THorseResponse);
+var
+  LText:   string;
+  LStream: TStream;
+  LBytes:  TBytes;
+  I, LSum, LSize: Integer;
+begin
+  LText := Req.Body;                    // must not raise
+
+  LSum  := 0;
+  LSize := 0;
+  LStream := Req.Body<TStream>;         // must still be readable from 0
+  if Assigned(LStream) then
+  begin
+    LSize := LStream.Size;
+    LStream.Position := 0;              // never free this — non-owning
+    SetLength(LBytes, LSize);
+    if LSize > 0 then
+      LStream.Read(LBytes[0], LSize);
+    for I := 0 to LSize - 1 do
+      Inc(LSum, LBytes[I]);
+  end;
+
+  Res.ContentType('application/json; charset=utf-8')
+     .Send(Format('{"size":%d,"sum":%d,"textLen":%d}', [LSize, LSum, Length(LText)]));
+end;
+
 procedure EchoBodyTwice(Req: THorseRequest; Res: THorseResponse);
 var
   LFirst, LSecond: string;
@@ -1010,6 +1055,7 @@ begin
 
     // ─── COMPAT-1 ──────────────────────────────────────────────────────────
     THorse.Get   ('/compat/rawbody',             CompatRawBody);
+    THorse.Post  ('/body/binary',                BinaryBody);        { FIX-BINBODY-1 }
 
     // ─── Streaming (501 — not implemented in v1) ───────────────────────────
     THorse.Get   ('/stream/pull',                StreamPull);

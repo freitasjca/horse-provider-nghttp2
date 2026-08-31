@@ -173,7 +173,21 @@ begin
     LStream.Position := 0;
     SetLength(LBytes, LStream.Size);
     LStream.Read(LBytes[0], LStream.Size);
-    FContentCache := TEncoding.UTF8.GetString(LBytes);
+    // [FIX-BINBODY-1] A binary body (protobuf, gRPC frames, sfBinary, images)
+    // is not valid UTF-8.  TEncoding.GetString raises EEncodingError ('No
+    // mapping for the Unicode character...') when a non-empty input decodes to
+    // zero chars, which aborted the request with a 500 before the handler ran.
+    // Content is a *text* accessor; binary callers use Body<TStream>, so
+    // degrading to '' is correct and must not kill the request.
+    try
+      FContentCache := TEncoding.UTF8.GetString(LBytes);
+    except
+      FContentCache := '';
+    end;
+    // [FIX-BINBODY-1] Rewind: the read above left the stream at EOF and this is
+    // the same non-owning reference Body<TStream> hands out, so a handler that
+    // touched Content first would otherwise read zero bytes from it.
+    LStream.Position := 0;
   end;
   FContentCached := True;
   Result := FContentCache;
