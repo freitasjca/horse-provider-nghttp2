@@ -1412,6 +1412,137 @@ else
 fi
 
 echo
+echo "── 19  compile-guard negative cases (Horse.pas) ─────────────────────────"
+#
+# Every other stage asserts that a VALID define combination compiles. This one
+# asserts that INVALID ones do not — the only kind of check that can catch a
+# guard which was never written, or one that a later {$ELSEIF} reordering made
+# unreachable.
+#
+# Two failure shapes are covered, and they fail differently:
+#
+#   NGHTTP2 + IOCP        Both are transport providers. IOCP is tested first in
+#                         every selector chain, so WITHOUT a guard this compiles
+#                         cleanly and silently produces an IOCP binary — the
+#                         developer gets a transport they did not ask for and
+#                         nothing in the build says so. A green compile here is
+#                         the bug.
+#
+#   NGHTTP2 + APPTYPE_*   On FPC the cross-product units do not exist. Without a
+#                         guard the application-type directive is silently
+#                         discarded and the console shape is built instead, so a
+#                         daemon build yields a non-daemon binary.
+#
+# expect_guard_fail asserts BOTH that compilation fails AND that it fails for
+# the stated reason. Checking only the exit status would pass on any unrelated
+# breakage — a missing unit, a typo, a bad -Fu path — and would keep passing
+# after the guard itself was deleted.
+expect_guard_fail() {   # <label> <expected-substring> <define...>
+  local label=$1; shift
+  local expect=$1; shift
+  local defs=()
+  local d
+  for d in "$@"; do defs+=("-d$d"); done
+
+  # Fresh directory per probe, holding BOTH the probe source and its output.
+  #
+  # This is the trap that made the first version of this stage report three
+  # false FAILs: the probe .lpr used to live in $WORK, and $WORK is where the
+  # earlier stages deposit Horse.ppu. FPC implicitly searches the directory of
+  # the main source file, so `uses Horse` resolved to that cached unit —
+  # compiled earlier with only HORSE_PROVIDER_NGHTTP2 defined — and the
+  # {$MESSAGE FATAL} never re-fired, because a {$MESSAGE} only fires when the
+  # unit is genuinely recompiled. Every probe then "compiled successfully",
+  # which this stage correctly reports as the defect, pointing at a guard that
+  # was in fact present and correct.
+  #
+  # -B (build all) makes that impossible to regress: it forces recompilation of
+  # every unit regardless of any .ppu found anywhere on the search path.
+  local outdir
+  outdir=$(mktemp -d "$WORK/guard_XXXXXX")
+  local src="$outdir/guard_probe.lpr"
+  local log="$outdir/guard_probe.log"
+
+  cat > "$src" <<'EOF'
+program guard_probe;
+{$MODE DELPHI}{$H+}
+uses Horse;
+begin
+end.
+EOF
+
+  if $TRUNK $FLAGS -B -FU"$outdir" -FE"$outdir" "${defs[@]}" "$src" > "$log" 2>&1; then
+    fail "$label"
+    echo "  ── compiled successfully, which is the defect ───────────────"
+    echo "    Defines: $*"
+    echo "    Horse.pas accepted a combination it must reject. Without the"
+    echo "    guard the selector chain silently picks whichever branch comes"
+    echo "    first, so the build is wrong and says nothing."
+    return 1
+  fi
+
+  if grep -qF "$expect" "$log"; then
+    pass "$label"
+    return 0
+  fi
+
+  fail "$label"
+  echo "  ── failed, but not for the expected reason ──────────────────"
+  echo "    Defines: $*"
+  echo "    Expected to find: $expect"
+  echo "    A compile failure alone does not prove the guard fired — this"
+  echo "    stage would pass on any unrelated breakage if it checked only"
+  echo "    the exit status. Compiler output:"
+  tail -6 "$log" | sed 's/^/      | /'
+  return 1
+}
+
+if [[ ! -f "$HORSE/Horse.pas" ]]; then
+  skip "guard negatives — $HORSE/Horse.pas not found"
+else
+  expect_guard_fail \
+    "NGHTTP2 + IOCP rejected (would otherwise build IOCP silently)" \
+    "mutually exclusive" \
+    HORSE_PROVIDER_NGHTTP2 HORSE_PROVIDER_IOCP || true
+
+  expect_guard_fail \
+    "NGHTTP2 + APPTYPE_DAEMON rejected on FPC (no FPC.Daemon unit)" \
+    "HORSE_APPTYPE_DAEMON is not supported on FPC" \
+    HORSE_PROVIDER_NGHTTP2 HORSE_APPTYPE_DAEMON || true
+
+  expect_guard_fail \
+    "NGHTTP2 + APPTYPE_LCL rejected on FPC (no FPC.LCL unit)" \
+    "HORSE_APPTYPE_LCL is not supported on FPC" \
+    HORSE_PROVIDER_NGHTTP2 HORSE_APPTYPE_LCL || true
+
+  # Positive control. Without it the three checks above would still pass if
+  # `uses Horse` could not compile for some unrelated reason — every probe
+  # would fail, and failing is what they are looking for.
+  #
+  # Note this control CANNOT detect the stale-.ppu fault described above: a
+  # cached Horse.ppu makes the control pass too. That is exactly how the first
+  # run of this stage produced three FAILs beside a green control. Same isolated
+  # directory and -B as the probes, so all four share one compilation regime.
+  GUARD_OUT=$(mktemp -d "$WORK/guard_ok_XXXXXX")
+  cat > "$GUARD_OUT/guard_probe.lpr" <<'EOF'
+program guard_probe;
+{$MODE DELPHI}{$H+}
+uses Horse;
+begin
+end.
+EOF
+  if $TRUNK $FLAGS -B -FU"$GUARD_OUT" -FE"$GUARD_OUT" -dHORSE_PROVIDER_NGHTTP2 \
+       "$GUARD_OUT/guard_probe.lpr" > "$GUARD_OUT/guard_ok.log" 2>&1; then
+    pass "CONTROL: NGHTTP2 alone still compiles (probe is valid)"
+  else
+    fail "CONTROL: NGHTTP2 alone still compiles (probe is valid)"
+    echo "  ── the probe itself is broken, so the three checks above prove"
+    echo "     nothing — they pass by failing, and everything is failing."
+    tail -6 "$GUARD_OUT/guard_ok.log" | sed 's/^/      | /'
+  fi
+fi
+
+echo
 if [[ $SKIP -gt 0 ]]; then
   echo "Stages: $PASS passed, $FAIL failed, $SKIP skipped"
   echo "        ── skipped stages verified nothing; see the SKIP lines above"
