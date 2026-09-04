@@ -314,6 +314,25 @@ begin
      .Send(Format('{"size":%d,"body":"%s"}', [Length(LBody), JsonEsc(LBody)]));
 end;
 
+{ FIX-BODYBYTES-1 — Res.Send(TBytes) must actually reach the client.
+
+  Horse core's Send(TBytes) writes the shadow slot FCSBodyBytes, exposed as the
+  public BodyBytes property. This provider's WriteBody read ContentStream and
+  BodyText but never BodyBytes, so the response fell through to the empty-body
+  tail: HTTP 200 with no payload, no exception, nothing in any log.
+
+  That matters more here than on other transports — protobuf and gRPC payloads
+  are bytes by definition, and Send(TBytes) is the natural way to return them.
+
+  ASCII payload on purpose: the defect under test is "the slot is never read",
+  so an exact string compare is the clearest assertion. Byte fidelity through
+  the bytes path is already covered by test 38. }
+procedure BodyBytesRoute(Req: THorseRequest; Res: THorseResponse);
+begin
+  Res.ContentType('application/octet-stream');
+  Res.Send(TEncoding.UTF8.GetBytes('BODYBYTES-OK-0123456789'));
+end;
+
 { FIX-BINBODY-1 — a binary request body must not abort the request.
 
   A body of arbitrary bytes (0..255) is deliberately not valid UTF-8. Before
@@ -1056,6 +1075,7 @@ begin
     // ─── COMPAT-1 ──────────────────────────────────────────────────────────
     THorse.Get   ('/compat/rawbody',             CompatRawBody);
     THorse.Post  ('/body/binary',                BinaryBody);        { FIX-BINBODY-1 }
+    THorse.Get   ('/body/bytes',                 BodyBytesRoute);    { FIX-BODYBYTES-1 }
 
     // ─── Streaming (501 — not implemented in v1) ───────────────────────────
     THorse.Get   ('/stream/pull',                StreamPull);

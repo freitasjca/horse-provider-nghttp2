@@ -269,6 +269,23 @@ begin
     // here — Horse leaves ContentStream at the position the app left it.
     AStream.SendStream(AHorseRes.ContentStream);
   end
+  else if Length(AHorseRes.BodyBytes) > 0 then
+  begin
+    // [FIX-BODYBYTES-1] The shadow slot written by Res.Send(TBytes).
+    //
+    // Horse core's Send(const AContent: TBytes) stores into FCSBodyBytes on the
+    // shadow path (FWebResponse = nil — every non-WebBroker provider) and
+    // exposes it as the public BodyBytes property. This bridge never read that
+    // slot, so Res.Send(SomeBytes) fell through BodyText (still empty) to the
+    // empty-body tail: the client got 200 with no payload and no error
+    // anywhere. Same silent-empty-body failure as the historical
+    // Res.Send<TStream>, one slot along.
+    //
+    // Also the cheapest body path here: the TBytes goes straight out with no
+    // stream copy and no UTF-8 conversion — which matters on this transport,
+    // where protobuf and gRPC payloads are bytes by definition.
+    AStream.Send(AHorseRes.BodyBytes);
+  end
   else
   begin
     LBody := AHorseRes.BodyText;

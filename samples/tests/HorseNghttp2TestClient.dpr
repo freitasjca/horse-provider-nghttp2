@@ -1,4 +1,4 @@
-program HorseNghttp2TestClient;
+﻿  program HorseNghttp2TestClient;
 
 {$APPTYPE CONSOLE}
 
@@ -854,6 +854,26 @@ begin
     Pos('"sum":32640', R.Body) > 0, R.Body);
   R := DoRequest('GET', '/ping', nil, nil);
   Check('server healthy after binary body',
+    (R.Status = 200) and (R.Body = 'pong'),
+    Format('%d / %s', [R.Status, R.Body]));
+
+  // ─── 39 ────────────────────────────────────────────────────────────────
+  // FIX-BODYBYTES-1. Horse core's Send(TBytes) writes the FCSBodyBytes shadow
+  // slot; WriteBody read ContentStream and BodyText but never BodyBytes, so
+  // the response fell through to the empty-body tail — HTTP 200, no payload,
+  // no exception, nothing logged.
+  //
+  // The status check alone would NOT catch it: a 200 was always returned. The
+  // body comparison is the assertion that matters.
+  Section('39  GET /body/bytes  (FIX-BODYBYTES-1 — Res.Send(TBytes))');
+  R := DoRequest('GET', '/body/bytes', nil, nil);
+  Check('status 200', R.Status = 200, IntToStr(R.Status));
+  Check('body is not empty (the whole point — it used to be)',
+    R.Body <> '', Format('len=%d', [Length(R.Body)]));
+  Check('body matches the bytes the handler sent',
+    R.Body = 'BODYBYTES-OK-0123456789', R.Body);
+  R := DoRequest('GET', '/ping', nil, nil);
+  Check('server healthy after Send(TBytes)',
     (R.Status = 200) and (R.Body = 'pong'),
     Format('%d / %s', [R.Status, R.Body]));
 end;
