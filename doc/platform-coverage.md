@@ -4,7 +4,7 @@ Validated at **runtime** on all three, not merely compiled:
 
 > **FPC 3.2.2 also passes**, verified 2026-08-22: 24 stages green, 1 explicit
 > skip. Everything in the table below that the trunk column covers — the
-> 106-check suite over h2c/TLS/mTLS, the same three via the epoll event loop,
+> 114-check suite over h2c/TLS/mTLS, the same three via the epoll event loop,
 > graceful shutdown, streaming, backpressure and WebSocket — passes identically
 > on 3.2.2 with `-dHORSE_NGHTTP2_NO_GRPC`. Only the gRPC row needs trunk 3.3.1,
 > for `TCustomAttribute`. The trunk column stays the reference because it is the
@@ -12,10 +12,10 @@ Validated at **runtime** on all three, not merely compiled:
 
 | Gate | Windows / Delphi | Linux / FPC 3.3.1 | Linux64 / Delphi |
 |---|---|---|---|
-| 106-check regression, h2c | compiles; run pending | 106/106 | 94/94 (pre-STREAM-1) |
-| 106-check regression, TLS | 106/106 | 106/106 | — |
-| 106-check regression, mTLS | 106/106 | 106/106 | — |
-| 106-check via epoll event loop — h2c / TLS / mTLS | n/a (IOCP) | 106/106 each | — |
+| regression suite, h2c | compiles; run pending | **114/114** (2026-09-10) | 94/94 (pre-STREAM-1) |
+| regression suite, TLS | 106/106 (not re-measured) | **114/114** (2026-09-10) | — |
+| regression suite, mTLS | 106/106 (not re-measured) | **114/114** (2026-09-10) | — |
+| regression suite via epoll event loop — h2c / TLS / mTLS | n/a (IOCP) | **114/114 each** (2026-09-10) | — |
 | mTLS negative | — | rejected (thread + event loop) | — |
 | Streaming & SSE — content, ordering, concurrency | ✓ (checks 33–37, TLS + mTLS) | ✓ (checks 33–37) | — |
 | Streaming — **incremental arrival**, thread driver | ✓ gaps 63/69/68/69 ms, span 269 ms (cross-machine) | ✓ 5 events spanned 247 ms | — |
@@ -40,7 +40,15 @@ Linux64 / Delphi is exercised through PAServer with the client on a separate mac
 - **WSL2 mirrored networking** causes ~50% reply loss on the graceful shutdown test — this is an environment artifact. Switching to `networkingMode=NAT` in `%USERPROFILE%\.wslconfig` (then `wsl --shutdown`) gives 27/27 passes over 9 consecutive runs. Full investigation: `plans/HANDOFF-nghttp2-shutdown-2026-08-18.md`.
 - **IOCP graceful shutdown** was validated with the old `h2load started == succeeded` gate, which was later shown to measure the load generator's GOAWAY reaction rather than server delivery. Needs re-validation with `verify-drain-delivery.sh`. See [doc/graceful-shutdown.md](graceful-shutdown.md).
 - **epoll graceful shutdown** under load: `build-fpc.sh` stage 6 `eventloop` path reports 96/184. Thread driver is fully validated.
-- **The suite grew 94 → 106** with STREAM-1: checks 33–37 replaced the four `501` streaming stubs with real assertions. The count is the same binary on every platform, so an older `94/94` line above records a run predating that change, not a smaller suite.
+- **The suite grew 94 → 106 → 114.** 106 came with STREAM-1, where checks 33–37
+  replaced the four `501` streaming stubs with real assertions; the further 8
+  arrived later and are not attributed here, because nobody recorded which stage
+  added them. It is the same binary on every platform, so a lower number in a
+  row above records an older run rather than a smaller suite — the Windows
+  column still reads 106 because it has not been re-measured since 2026-09-10,
+  not because Windows runs fewer checks. **Do not quote a count from this table
+  without re-running**; every stale figure corrected on 2026-09-10 had been
+  copied from a document rather than read off a run.
 - **The incremental-arrival gate needs a per-frame-timestamping client**, which no Pascal client here is: `TNghttp2Client` returns a *completed* response, so buffered and streamed delivery are byte-identical to it. `build-fpc.sh` stage 15 covers Linux/epoll. Windows was measured by hand — see below.
 - **Do not read check 37's latency as that evidence.** The Windows runs report `GET /stream/sse total: 330 ms` against 2–6 ms for every other request, and the contrast invites the conclusion that frames were observed arriving. They were not. The handler sleeps 4 × 60 ms whatever the transport does with the bytes, so an implementation that buffered all five events and flushed them at the end reports the same ~330 ms. That number measures when the response **completed**, not when frames **arrived**. Nor is unstamped `curl -N` output sufficient — the five events appear in order either way once the transfer is done. Only per-line timestamps separate the two:
   ```bash

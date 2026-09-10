@@ -4,9 +4,11 @@ The provider compiles and runs on **FPC trunk 3.3.1** with full parity to the De
 
 **FPC 3.2.2 — supported, minus gRPC.** Build with `-dHORSE_NGHTTP2_NO_GRPC`;
 `build-fpc.sh` selects it automatically from `fpc -iV`. Verified 2026-08-22:
-24 stages pass, 1 explicit skip. HTTP/2 (h2c, TLS, mTLS), the epoll event loop,
-graceful shutdown, streaming, backpressure and WebSocket RFC 8441 all pass —
-106/106 on six suite configurations.
+HTTP/2 (h2c, TLS, mTLS), the epoll event loop, graceful shutdown, streaming,
+backpressure and WebSocket RFC 8441 all pass — **114/114 on six suite
+configurations** (2026-09-10). The suite has grown twice since it was named the
+"94-check suite", so prefer a figure read from a run over one quoted from a
+document, this one included.
 
 **gRPC needs trunk 3.3.1.** 3.2.2's `Rtti` unit declares no `TCustomAttribute`
 and the compiler rejects `{$RTTI EXPLICIT}`; the protobuf codec and

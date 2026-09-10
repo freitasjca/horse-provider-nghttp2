@@ -148,13 +148,13 @@ you stream, use the worker pool (the default).
 
 | What | Where | Status |
 |---|---|---|
-| Status, body, ordering, content-type, concurrent streams, SSE | `HorseNghttp2TestClient` tests 33–37 | ✓ 106/106 on FPC 3.3.1, all six transport configurations |
+| Status, body, ordering, content-type, concurrent streams, SSE | `HorseNghttp2TestClient` tests 33–37 | ✓ 114/114 on FPC 3.3.1, all six transport configurations (2026-09-10) |
 | **Incremental arrival** (timing) | `build-fpc.sh` stage 15 | ✓ 5 events spanned 247 ms (theoretical 240 ms) |
 | **Producer backpressure** (memory) | `build-fpc.sh` stage 16 | ✓ streamed 17.1 MB, peak RSS grew 2.9 MB |
 
 Validated 2026-08-20 on FPC trunk 3.3.1 / Linux across h2c, TLS and mTLS, on
 both the thread driver and the epoll event loop; and on Delphi 12 / Win64
-across TLS and mTLS (106/106 each).
+across TLS and mTLS (114/114 each).
 
 Incremental arrival is confirmed on **all four** driver × platform combinations,
 each measured against the handler's 60 ms inter-event sleep:

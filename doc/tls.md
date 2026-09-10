@@ -68,4 +68,4 @@ Or via `HorseNghttp2TestClient.exe --client-cert tls/client-cert.pem --client-ke
 
 - OpenSSL 3.x and 1.1.x are both supported; the version is detected at runtime via `OPENSSL_version_num` — no recompile needed when upgrading OpenSSL.
 - `SSLKeyPassword` is accepted and wires `SSL_CTX_set_default_passwd_cb`, but has never been exercised against an encrypted key. If you test this, please report the result.
-- TLS uses memory-BIO transport (Nghttp2.Tls v2.2): OpenSSL never holds the socket fd directly. This is the prerequisite for the epoll/IOCP event-loop engines and was validated 2026-08-16 with no regressions in the 94-check suite.
+- TLS uses memory-BIO transport (`Nghttp2.Tls`, since Delphi-nghttp2 1.0.0): OpenSSL never holds the socket fd directly. This is the prerequisite for the epoll/IOCP event-loop engines and was validated 2026-08-16 with no regressions in the 94-check suite.

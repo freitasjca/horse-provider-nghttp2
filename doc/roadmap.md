@@ -13,7 +13,7 @@ All items marked **✓** ship in the v1.0.0 public release. Internal milestone l
 | Worker pool (CPU-offload for handlers) | **✓** |
 | `Horse.pas` NGHTTP2 hooks (upstream PR pending) | **✓** |
 | Smoke test server + curl-driven suite | **✓** |
-| 94-check parity suite | **✓** (94/94 h2c + h2/TLS) |
+| 114-check parity suite | **✓** (114/114 across six transport configurations) |
 | TLS + ALPN — server + client (OpenSSL 3.x / 1.1.x auto-detect) | **✓** |
 | mTLS (client cert verification) | **✓** |
 | Cross-product app-type units — Delphi (VCL / Daemon / Windows Service) | **✓** |

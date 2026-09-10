@@ -38,9 +38,9 @@ HorseNghttp2TestServer.exe tls
 HOST=https://localhost:9443 bash samples/tests/run-smoke-tests.sh
 ```
 
-## 94-check parity suite
+## 114-check parity suite
 
-`HorseNghttp2TestClient.dpr` is the full 94-check suite (mirrors `HorseCSTestClient`):
+`HorseNghttp2TestClient.dpr` is the full 114-check suite (mirrors `HorseCSTestClient`):
 
 ```bat
 dcc64 -B samples\tests\HorseNghttp2TestClient.dpr
@@ -113,7 +113,7 @@ bash build-fpc.sh                  # all 19 stages (18 numbered, plus 4b)
 bash build-fpc.sh --compile-only   # stages 1–4 only
 ```
 
-Stages narrow in scope so a failure names its own cause: socket alone → session + server → both programs → 94-check suite → graceful-shutdown delivery (nghttp witness) → connection-thread leak growth → two-stage GOAWAY frame trace → TLS → mTLS → gRPC → the same suites again via the epoll event loop → streaming timing and producer backpressure → WebSocket upgrade. Requires `h2load` and `nghttp` (`apt install nghttp2-client`); stage 18 additionally needs Python with `h2`.
+Stages narrow in scope so a failure names its own cause: socket alone → session + server → both programs → 114-check suite → graceful-shutdown delivery (nghttp witness) → connection-thread leak growth → two-stage GOAWAY frame trace → TLS → mTLS → gRPC → the same suites again via the epoll event loop → streaming timing and producer backpressure → WebSocket upgrade. Requires `h2load` and `nghttp` (`apt install nghttp2-client`); stage 18 additionally needs Python with `h2`.
 
 A full green run reports **27 passed** — more than 18, because several stages assert more than once (mTLS checks positive and negative; stage 6b covers three connection shapes; stage 18 makes four assertions).
 

@@ -55,7 +55,7 @@ The provider implements all four Horse-framework contracts from `horse/.agents/A
 
 ## Contributing
 
-Before opening a PR, run both `HorseNghttp2TestClient.exe` (106/106) and `HorseNghttp2GrpcTestClient.exe` (35/35) and confirm all tests pass.
+Before opening a PR, run both `HorseNghttp2TestClient.exe` (114/114) and `HorseNghttp2GrpcTestClient.exe` (35/35) and confirm all tests pass.
 
 Reference docs:
 
