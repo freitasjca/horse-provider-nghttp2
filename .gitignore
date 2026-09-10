@@ -91,6 +91,12 @@ samples/tests/.venv/
 samples/grpc/HorseNghttp2GrpcDemo
 samples/grpc/HorseNghttp2GrpcTestClient
 
+# verify-drain-delivery.bat writes one server log per connection shape (A/B/C)
+# beside itself. run-tests.bat calls it, so a run leaves three of these behind.
+samples/tests/server-A.log
+samples/tests/server-B.log
+samples/tests/server-C.log
+
 # run-tests.bat writes its stage logs here. Relative rather than %TEMP%
 # because a quoted redirect target cannot survive `start "" /B cmd /c "..."`.
 samples/tests/_winlogs/
