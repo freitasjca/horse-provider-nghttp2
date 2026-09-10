@@ -1,4 +1,4 @@
-﻿  program HorseNghttp2TestClient;
+program HorseNghttp2TestClient;
 
 {$APPTYPE CONSOLE}
 

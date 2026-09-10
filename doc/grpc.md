@@ -192,12 +192,15 @@ within a single message.
 An empty array emits nothing. proto3 cannot distinguish "empty" from "absent",
 so both decode to length 0.
 
-> **Scalars differ here.** Repeated fields omit themselves when empty, but
-> *scalar* fields are written unconditionally — including ones holding their
-> proto3 default. An empty `TBytes` still costs a tag plus a zero length. This
-> is a deviation from canonical proto3 (which omits defaults), harmless for
-> interop but relevant if you ever byte-compare output against another stack.
-> Tracked in [limitations.md](limitations.md).
+> **Scalars behave the same way, since library 1.12.0.** A scalar holding its
+> proto3 default is omitted, so an all-default message encodes to zero bytes and
+> output is byte-for-byte comparable against another stack. Earlier versions
+> wrote every scalar unconditionally — legal, but non-canonical — so pin
+> `Delphi-nghttp2 >= 1.12.0` if you depend on this.
+>
+> **Explicit presence is unaffected.** A proto3 `optional` field *set* to zero
+> still goes on the wire: the has-bit decides, not the value. That is the whole
+> point of `optional`, and it is why omission cannot simply test for zero.
 
 ### `TBytes` is not a repeated field
 
@@ -404,9 +407,20 @@ implementations use; real messages do not approach it.
 returning cleanly — otherwise a truncated stream is indistinguishable from a
 short one.
 
-## Limitations (v1.0.0)
+## Limitations
 
-- **No map fields** — `map<K,V>` is not yet supported. Planned.
-- **Scalar variants still missing** — unsigned (`uint32`/`uint64`), ZigZag (`sint32`/`sint64`) and fixed (`fixed*`/`sfixed*`) encodings. `int32`/`int64` cover the common cases; the rest are planned.
+Scoped to the *library* version Boss resolves — the provider's floor is
+`Delphi-nghttp2 >= 1.10.0` and Boss takes the newest satisfying it. The full
+list is in [limitations.md](limitations.md).
+
+- **ZigZag and fixed-width scalars are not selectable** — `sint32`/`sint64`
+  encode as plain varints, `fixed*`/`sfixed*` as varints rather than
+  fixed-width, because the wire type follows the Pascal type and RTTI cannot
+  express the difference. The bytes are wrong rather than merely suboptimal, so
+  `protogen` refuses these types at build time instead of generating code that
+  would silently mis-encode. `int32`/`int64`/`uint32`/`uint64` cover the rest.
+- **Resolved since this section was written:** `map<K,V>` (library 1.13.0) and
+  unsigned `uint32`/`uint64` above 2^31 (1.10.0 — below that they were silently
+  corrupted, FIX-PROTO-UINT32-1).
 - **Streaming RPCs are covered on h2c only** — all three shapes work; TLS/mTLS share the dispatcher, reader and writer, so a transport-specific difference is unlikely, but untested.
 - **FPC requires libffi** for `RegisterService<T>`. Use `RegisterMethod` + `NGHTTP2_GRPC_NO_FFI` to avoid the dependency.

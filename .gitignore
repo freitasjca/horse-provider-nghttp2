@@ -90,3 +90,24 @@ scripts/output.txt
 samples/tests/.venv/
 samples/grpc/HorseNghttp2GrpcDemo
 samples/grpc/HorseNghttp2GrpcTestClient
+
+# FPC binaries under samples/tests. These have NO extension -- an ELF built by
+# fpc is named after the .dpr with nothing appended -- so *.exe does not cover
+# them and neither does any suffix rule. Each one has to be named. This is the
+# fourth time an extensionless binary has shown up untracked here; one was
+# committed by accident before 1.13.1 and only surfaced when a Windows build
+# deleted it. The largest below is 26 MB, which the repo would carry forever.
+samples/tests/HorseNghttp2TestServer
+samples/tests/HorseNghttp2TestClient
+samples/tests/HorseNghttp2DrainCheck
+samples/tests/bench-bin/
+samples/tests/__pycache__/
+
+# Dated bench + diagnostic reports written by run-conn-sweep.sh,
+# run-tls-sweep.sh, diagnose-conn-drops.sh and run-slow-latency-ab.sh.
+# The scripts are tracked; their output never has been.
+samples/tests/conn-sweep-*.md
+samples/tests/conn-drops-*.md
+samples/tests/loop-profile-*.md
+samples/tests/tls-sweep-*.md
+samples/tests/slow-latency-*.md
