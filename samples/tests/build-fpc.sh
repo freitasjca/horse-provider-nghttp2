@@ -22,18 +22,18 @@
 #       + Nghttp2.Engine.Epoll   — nothing references it, so it is only ever
 #                                  compiled because this stage names it
 #    3  test server              — full provider + Horse
-#    4  test client              — the 94-check suite binary
-#    5  run 94-check suite                        (thread driver, h2c)
+#    4  test client              — the 114-check suite binary
+#    5  run 114-check suite                        (thread driver, h2c)
 #    6  run graceful-shutdown test (needs h2load)
 #    7  connection-thread leak growth
 #    8  two-stage GOAWAY frame trace
-#    9  94-check suite over TLS
-#   10  94-check suite over mTLS, positive + negative
+#    9  114-check suite over TLS
+#   10  114-check suite over mTLS, positive + negative
 #   11  gRPC over h2c
-#   12  94-check suite via the epoll EVENT LOOP   (h2c)
-#   13  94-check suite over TLS via the EVENT LOOP  (B4d: handshake driven by
+#   12  114-check suite via the epoll EVENT LOOP   (h2c)
+#   13  114-check suite over TLS via the EVENT LOOP  (B4d: handshake driven by
 #       HandshakeStep from RunOnce, reads via ReadNB, writes via WriteNB)
-#   14  94-check suite over mTLS via the EVENT LOOP, positive AND negative —
+#   14  114-check suite over mTLS via the EVENT LOOP, positive AND negative —
 #       the negative is the one that matters: a resumable handshake that
 #       wrongly SUCCEEDS passes every positive check ever written
 #   15  streaming arrives INCREMENTALLY (curl -N timing) — the one streaming
@@ -246,7 +246,7 @@ require_port_free() {   # <port>
 }
 
 # run_client_suite <logname> <label> <target-url> [extra client args...]
-# The 94-check client against one endpoint. Same everywhere, so the TLS and
+# The 114-check client against one endpoint. Same everywhere, so the TLS and
 # mTLS stages differ only in their arguments.
 run_client_suite() {
   local logname=$1 label=$2 target=$3
@@ -451,15 +451,15 @@ if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
   exit $FAIL
 fi
 
-# ── 5 · the 94-check suite ───────────────────────────────────────────────────
+# ── 5 · the 114-check suite ───────────────────────────────────────────────────
 echo
-echo "── 5  94-check suite (h2c) ─────────────────────────────────────────────"
+echo "── 5  114-check suite (h2c) ─────────────────────────────────────────────"
 # </dev/null on every binary: these test programs end with a
 # "Press ENTER to exit..." ReadLn, which parks the script forever when they
 # inherit the terminal. EOF makes that read return immediately.
 # timeout: a hang must fail the stage, not the run.
 if ! require_port_free "$PORT"; then
-  fail "94-check suite (port $PORT occupied before we started)"
+  fail "114-check suite (port $PORT occupied before we started)"
   echo
   echo "Stages: $PASS passed, $FAIL failed"
   exit $FAIL
@@ -471,11 +471,11 @@ SERVERS+=("$SRV")
 sleep 0.6
 
 if timeout 120 ./HorseNghttp2TestClient < /dev/null > "$WORK/client.log" 2>&1; then
-  pass "94-check suite"
+  pass "114-check suite"
 elif [[ $? -eq 124 ]]; then
-  fail "94-check suite (timed out after 120s)"
+  fail "114-check suite (timed out after 120s)"
 else
-  fail "94-check suite"
+  fail "114-check suite"
 fi
 grep -E "passed, .* failed" "$WORK/client.log" | tail -1 | sed 's/^/    /'
 kill -TERM "$SRV" 2>/dev/null || true
@@ -788,7 +788,7 @@ fi
 # No rebuild: TLS is a runtime choice, so the binaries from stages 3 and 4
 # serve it unchanged. Only the certs and libssl need to be present.
 echo
-echo "── 9  94-check suite over TLS ──────────────────────────────────────────"
+echo "── 9  114-check suite over TLS ──────────────────────────────────────────"
 if [[ ! -f tls/cert.pem || ! -f tls/key.pem ]]; then
   skip "tls/cert.pem or tls/key.pem missing — run: bash gen-tls-cert.sh"
 elif ! wait_port_free "$TLS_PORT" 15; then
@@ -804,7 +804,7 @@ else
     fail "TLS server exited at startup"
     tail -4 "$WORK/tls-server.log" | sed 's/^/    | /'
   else
-    run_client_suite tls-client "94-check suite over TLS" "https://127.0.0.1:$TLS_PORT"
+    run_client_suite tls-client "114-check suite over TLS" "https://127.0.0.1:$TLS_PORT"
   fi
   kill -TERM "$SRV" 2>/dev/null || true
   wait "$SRV" 2>/dev/null || true
@@ -816,7 +816,7 @@ fi
 # under test. Reversed, a negative "pass" would also be produced by a server
 # that never started.
 echo
-echo "── 10  94-check suite over mTLS (positive + negative) ──────────────────"
+echo "── 10  114-check suite over mTLS (positive + negative) ──────────────────"
 if [[ ! -f tls/ca.pem || ! -f tls/client-cert.pem || ! -f tls/client-key.pem ]]; then
   skip "tls/ca.pem or client cert/key missing — run: bash gen-tls-cert.sh"
 elif ! wait_port_free "$TLS_PORT" 15; then
@@ -927,7 +927,7 @@ else
   popd > /dev/null
 fi
 
-# ── 12 · 94-check suite driven by the epoll event loop ───────────────────────
+# ── 12 · 114-check suite driven by the epoll event loop ───────────────────────
 #
 # Every stage above exercises the THREAD driver. This is the only one that
 # runs the epoll engine, and until it exists Nghttp2.Engine.Epoll is compiled
@@ -942,7 +942,7 @@ fi
 # h2c only. A TLS listener falls back to thread-per-connection by design, so
 # an `eventloop tls` run would silently measure the thread driver again.
 echo
-echo "── 12  94-check suite via epoll event loop (h2c) ────────────────────────"
+echo "── 12  114-check suite via epoll event loop (h2c) ────────────────────────"
 if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
   skip "test programs did not build"
 elif ! require_port_free "$PORT"; then
@@ -970,13 +970,13 @@ else
     if grep -q "RESOLVED: epoll event loop" "$WORK/eventloop-server.log"; then
       if timeout 120 ./HorseNghttp2TestClient \
            < /dev/null > "$WORK/eventloop-client.log" 2>&1; then
-        pass "94-check suite via event loop"
+        pass "114-check suite via event loop"
       elif [[ $? -eq 124 ]]; then
-        fail "94-check suite via event loop (timed out after 120s)"
+        fail "114-check suite via event loop (timed out after 120s)"
         echo "    a hang here is the engine, not the protocol — suspect a"
         echo "    connection parked with output held and no writable wake"
       else
-        fail "94-check suite via event loop"
+        fail "114-check suite via event loop"
       fi
       grep -E "passed, .* failed" "$WORK/eventloop-client.log" | tail -1 | sed 's/^/    /'
     else
@@ -1001,7 +1001,7 @@ fi
 # DoHandshake, which on a shared loop thread would stall every other connection
 # that loop owned.
 echo
-echo "── 13  94-check suite over TLS via epoll event loop ─────────────────────"
+echo "── 13  114-check suite over TLS via epoll event loop ─────────────────────"
 if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
   skip "test programs did not build"
 elif [[ ! -f tls/cert.pem || ! -f tls/key.pem ]]; then
@@ -1027,7 +1027,7 @@ else
     # stage 9. Without this check a regression to that behaviour reads green.
     if grep -q "RESOLVED: epoll event loop" "$WORK/eventloop-tls.log"; then
       run_client_suite eventloop-tls-client \
-        "94-check suite over TLS via event loop" "https://127.0.0.1:$TLS_PORT"
+        "114-check suite over TLS via event loop" "https://127.0.0.1:$TLS_PORT"
     else
       fail "TLS + eventloop requested but engine NOT resolved — would have retested stage 9"
     fi
@@ -1053,7 +1053,7 @@ fi
 # should fail passes every positive check ever written — this is the only
 # stage that would catch it on the engine.
 echo
-echo "── 14  94-check suite over mTLS via epoll event loop ────────────────────"
+echo "── 14  114-check suite over mTLS via epoll event loop ────────────────────"
 if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
   skip "test programs did not build"
 elif [[ ! -f tls/ca.pem || ! -f tls/client-cert.pem || ! -f tls/client-key.pem ]]; then
@@ -1127,7 +1127,7 @@ echo "── 15  streaming delivers incrementally (curl -N timing) ────�
 #
 # It is worth spelling out how expensive that is to diagnose, because it is why
 # this gate exists. On 2026-08-23 the missing guard produced NINE failing
-# stages on FPC 3.2.2 — 5, 9, 10, 12, 13, 14 (the 106-check client hanging on
+# stages on FPC 3.2.2 — 5, 9, 10, 12, 13, 14 (the 114-check client hanging on
 # check 33, /stream/pull) plus 15 and 16 — and every one of them read as a
 # protocol or transport defect. Trunk was green throughout, because there the
 # initialization order happened to favour the provider. A race you are winning
@@ -1412,7 +1412,7 @@ else
 fi
 
 echo
-echo "── 19  compile-guard negative cases (Horse.pas) ─────────────────────────"
+echo "── 19  compile-guard cases (Horse.pas) ──────────────────────────────────"
 #
 # Every other stage asserts that a VALID define combination compiles. This one
 # asserts that INVALID ones do not — the only kind of check that can catch a
@@ -1428,10 +1428,19 @@ echo "── 19  compile-guard negative cases (Horse.pas) ───────�
 #                         nothing in the build says so. A green compile here is
 #                         the bug.
 #
-#   NGHTTP2 + APPTYPE_*   On FPC the cross-product units do not exist. Without a
-#                         guard the application-type directive is silently
-#                         discarded and the console shape is built instead, so a
-#                         daemon build yields a non-daemon binary.
+#   NGHTTP2 + APPTYPE_*   POSITIVE cases since 2026-09-10. These were negative
+#                         while the FPC cross-product units did not exist — the
+#                         directive was silently discarded and a daemon build
+#                         yielded a non-daemon binary. The units now exist
+#                         (Horse.Provider.Nghttp2.FPC.{Daemon,LCL,HTTPApplication}
+#                         in the provider's src/), so the combinations are legal
+#                         and must COMPILE. They stay in this stage because the
+#                         failure they guard against is unchanged in shape: a
+#                         selector that silently picks the wrong branch.
+#
+#                         Do not "fix" a FAIL here by restoring the guard. Check
+#                         first whether the unit exists; a stale expectation and
+#                         a missing guard look identical in the output.
 #
 # expect_guard_fail asserts BOTH that compilation fails AND that it fails for
 # the stated reason. Checking only the exit status would pass on any unrelated
@@ -1497,22 +1506,70 @@ EOF
   return 1
 }
 
+# The positive counterpart. Same isolation discipline as expect_guard_fail — a
+# fresh directory and -B — because the stale-.ppu fault documented above makes a
+# probe pass for the wrong reason just as easily as it makes one fail.
+#
+# A missing OPTIONAL dependency is a SKIP, not a pass and not a failure: LCL
+# needs Lazarus (`Forms`), which a headless box legitimately lacks. Reporting
+# that as a pass would claim coverage this run did not have.
+expect_compiles() {   # <label> <skip-if-substring> <define...>
+  local label=$1; shift
+  local skipif=$1; shift
+  local defs=()
+  local d
+  for d in "$@"; do defs+=("-d$d"); done
+
+  local outdir
+  outdir=$(mktemp -d "$WORK/ok_XXXXXX")
+  local src="$outdir/ok_probe.lpr"
+  local log="$outdir/ok_probe.log"
+
+  cat > "$src" <<'PROBE'
+program ok_probe;
+{$MODE DELPHI}{$H+}
+uses Horse;
+begin
+end.
+PROBE
+
+  if $TRUNK $FLAGS -B -FU"$outdir" -FE"$outdir" "${defs[@]}" "$src" > "$log" 2>&1; then
+    pass "$label"
+    return 0
+  fi
+
+  if [[ -n "$skipif" ]] && grep -qF "$skipif" "$log"; then
+    skip "$label — needs $skipif, absent on this machine"
+    echo "    NOT a pass: this combination was never actually compiled here."
+    return 0
+  fi
+
+  fail "$label"
+  echo "  ── did not compile, and not for a missing optional dependency ─"
+  echo "    Defines: $*"
+  echo "    This combination is supported and must build. Compiler output:"
+  tail -6 "$log" | sed 's/^/      | /'
+  return 1
+}
+
 if [[ ! -f "$HORSE/Horse.pas" ]]; then
-  skip "guard negatives — $HORSE/Horse.pas not found"
+  skip "guard cases — $HORSE/Horse.pas not found"
 else
   expect_guard_fail \
     "NGHTTP2 + IOCP rejected (would otherwise build IOCP silently)" \
     "mutually exclusive" \
     HORSE_PROVIDER_NGHTTP2 HORSE_PROVIDER_IOCP || true
 
-  expect_guard_fail \
-    "NGHTTP2 + APPTYPE_DAEMON rejected on FPC (no FPC.Daemon unit)" \
-    "HORSE_APPTYPE_DAEMON is not supported on FPC" \
+  # Positive: the FPC cross-product units exist, so these must COMPILE.
+  expect_compiles \
+    "NGHTTP2 + APPTYPE_DAEMON compiles on FPC (FPC.Daemon unit)" \
+    "" \
     HORSE_PROVIDER_NGHTTP2 HORSE_APPTYPE_DAEMON || true
 
-  expect_guard_fail \
-    "NGHTTP2 + APPTYPE_LCL rejected on FPC (no FPC.LCL unit)" \
-    "HORSE_APPTYPE_LCL is not supported on FPC" \
+  # LCL needs Lazarus. Skips loudly rather than passing when Forms is absent.
+  expect_compiles \
+    "NGHTTP2 + APPTYPE_LCL compiles on FPC (FPC.LCL unit)" \
+    "Can't find unit Forms" \
     HORSE_PROVIDER_NGHTTP2 HORSE_APPTYPE_LCL || true
 
   # Positive control. Without it the three checks above would still pass if
