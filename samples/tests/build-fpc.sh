@@ -24,7 +24,13 @@
 #    3  test server              — full provider + Horse
 #    4  test client              — the 114-check suite binary
 #    5  run 114-check suite                        (thread driver, h2c)
-#    6  run graceful-shutdown test (needs h2load)
+#    6  run graceful-shutdown test (needs h2load)   THREAD driver
+#    6b graceful-shutdown delivery, single-connection shapes
+#    6c graceful shutdown on the EPOLL engine      (gates; verifies the
+#                                                   driver resolved, so a
+#                                                   silent fallback to the
+#                                                   thread driver cannot
+#                                                   pass as epoll cover)
 #    7  connection-thread leak growth
 #    8  two-stage GOAWAY frame trace
 #    9  114-check suite over TLS
@@ -666,6 +672,102 @@ else
   fi
 fi
 
+# ── 6c · graceful shutdown on the EPOLL engine ───────────────────────────────
+#
+# Added 2026-09-10, closing a gap that had been mis-described for months.
+# limitations.md said the epoll driver "reports 96/184 on stage 6"; there was
+# no epoll stage 6 to report anything. Stage 5 selects the thread driver and
+# stage 6 inherits it, and stages 12-14 run the epoll engine against the
+# regression suite rather than a shutdown. So graceful shutdown had been
+# validated on ONE of the three drivers and was untested — not failing — on the
+# other two. IOCP still is: it is Windows-only and no Linux stage can reach it.
+#
+# Same shape as stage 6 deliberately. The engine must be indistinguishable from
+# the thread driver at the protocol level, so a second definition of "drained
+# correctly" would be a second thing to keep true. Eight witnesses for the same
+# reason as there: each is one draw against a per-connection race, and a single
+# witness passed while the feature was losing ~50% of in-flight replies.
+#
+# h2c only, exactly as stage 12 documents: a TLS listener falls back to
+# thread-per-connection by design, so an eventloop+TLS drain would silently
+# measure the thread driver a second time and report it as epoll coverage.
+echo
+echo "── 6c  graceful shutdown on the epoll engine ───────────────────────────"
+if ! command -v h2load > /dev/null 2>&1; then
+  skip "h2load not installed (apt install nghttp2-client)"
+elif ! command -v nghttp > /dev/null 2>&1; then
+  skip "nghttp not installed (apt install nghttp2-client)"
+elif [[ $SERVER_OK -eq 0 ]]; then
+  skip "test server did not build"
+else
+  stdbuf -o0 -e0 ./HorseNghttp2TestServer eventloop \
+    shutdown-after=3000 shutdown-timeout=10000 \
+    < /dev/null > "$WORK/epoll-shutdown.log" 2>&1 &
+  SRV=$!
+  SERVERS+=("$SRV")
+  # 1.2s, as in stage 12: TDriverProbe reports the resolved driver ~400 ms in.
+  sleep 1.2
+
+  if ! kill -0 "$SRV" 2>/dev/null; then
+    fail "epoll shutdown server exited at startup"
+    tail -4 "$WORK/epoll-shutdown.log" | sed 's/^/    | /'
+  elif ! grep -q "RESOLVED: epoll event loop" "$WORK/epoll-shutdown.log"; then
+    # The whole stage turns on this line. A silent fallback to the thread
+    # driver would produce a confident PASS for coverage that never happened —
+    # which is the exact failure mode this stage was written to end.
+    fail "epoll shutdown — driver did NOT resolve to the event loop"
+    echo "    Without this the stage measures the thread driver and reports it"
+    echo "    as epoll coverage. Server log:"
+    grep -E "driver|RESOLVED" "$WORK/epoll-shutdown.log" | head -4 | sed 's/^/    | /'
+    kill -TERM "$SRV" 2>/dev/null || true
+    wait "$SRV" 2>/dev/null || true
+  else
+    EWIT=8
+    EWITPIDS=()
+    for w in $(seq $EWIT); do
+      ( timeout 60 nghttp http://127.0.0.1:9010/slow/5000 \
+          > "$WORK/epoll-witness.$w.log" 2>&1; echo $? > "$WORK/epoll-witness.$w.rc" ) &
+      EWITPIDS+=($!)
+    done
+    sleep 0.3
+
+    timeout 60 h2load -n 200 -c 4 -m 25 http://127.0.0.1:9010/slow/500 \
+      < /dev/null > "$WORK/epoll-h2load.log" 2>&1 || true
+
+    for _p in "${EWITPIDS[@]:-}"; do
+      [[ -n "$_p" ]] && wait "$_p" 2>/dev/null
+    done
+
+    if ! timeout 60 tail --pid="$SRV" -f /dev/null 2>/dev/null; then
+      kill -TERM "$SRV" 2>/dev/null || true
+    fi
+    wait "$SRV" 2>/dev/null
+
+    ESTARTED=$(grep -oE '[0-9]+ started' "$WORK/epoll-h2load.log" | grep -oE '^[0-9]+' || echo 0)
+    ESUCC=$(grep -oE '[0-9]+ succeeded' "$WORK/epoll-h2load.log" | grep -oE '^[0-9]+' || echo 0)
+    echo "    load (informational): h2load started=$ESTARTED succeeded=$ESUCC"
+
+    EOK=0
+    for w in $(seq $EWIT); do
+      rc=$(cat "$WORK/epoll-witness.$w.rc" 2>/dev/null || echo "?")
+      # rc=0 alone is NOT delivery: nghttp exits 0 while printing
+      # "Some requests were not processed". Assert the complete body.
+      if [[ "$rc" == "0" ]] && grep -q '"sleptMs":5000' "$WORK/epoll-witness.$w.log" 2>/dev/null; then
+        EOK=$((EOK + 1))
+      fi
+    done
+    echo "    witnesses: $EOK/$EWIT delivered"
+
+    if [[ "$EOK" -eq "$EWIT" ]]; then
+      pass "epoll graceful shutdown — all $EWIT in-flight requests delivered"
+    else
+      fail "epoll graceful shutdown — $((EWIT - EOK)) of $EWIT in-flight replies lost"
+      echo "    If this is WSL2, check networkingMode BEFORE suspecting the engine:"
+      echo "    mirrored injects RSTs that fake exactly this. See stage 6b's note."
+    fi
+  fi
+fi
+
 # ── 7 · connection-thread leak check ─────────────────────────────────────────
 # Connection threads used to be created FreeOnTerminate:=False and freed only
 # by Stop, from a list each thread removed itself from on the way out — so
@@ -934,7 +1036,7 @@ fi
 # but never executed — the compile step in stage 2 proves it links, nothing
 # more.
 #
-# Same 94 checks, same client, same routes; only the connection driver
+# Same 114 checks, same client, same routes; only the connection driver
 # changes. That is deliberate: a dedicated engine test would be a second
 # definition of correct, and the point is that the engine must be
 # indistinguishable from the thread driver at the protocol level.
@@ -964,7 +1066,7 @@ else
 
     # The gate that makes this stage mean anything. `eventloop` is a REQUEST
     # that degrades silently — wrong platform, engine unit not linked — and a
-    # fallback run passes all 94 checks while testing the driver that stage 5
+    # fallback run passes all 114 checks while testing the driver that stage 5
     # already covered. Without this check the stage would report green for
     # code that never ran.
     if grep -q "RESOLVED: epoll event loop" "$WORK/eventloop-server.log"; then
@@ -992,7 +1094,7 @@ fi
 
 # ── 13 · TLS driven by the epoll event loop ──────────────────────────────────
 #
-# Stage 9 runs the same 94 checks over TLS on the THREAD driver. This runs them
+# Stage 9 runs the same 114 checks over TLS on the THREAD driver. This runs them
 # on the engine, which is a different code path end to end: the handshake is
 # driven a step at a time from RunOnce via HandshakeStep, reads go through
 # ReadNB, and writes are encrypted with WriteNB before the socket sees them.
@@ -1023,7 +1125,7 @@ else
 
     # The gate that gives this stage meaning. Before B4d the engine DECLINED
     # to own accept whenever a TLS context was set, so `eventloop tls` fell
-    # back to the thread driver — passing all 94 checks while re-testing
+    # back to the thread driver — passing all 114 checks while re-testing
     # stage 9. Without this check a regression to that behaviour reads green.
     if grep -q "RESOLVED: epoll event loop" "$WORK/eventloop-tls.log"; then
       run_client_suite eventloop-tls-client \

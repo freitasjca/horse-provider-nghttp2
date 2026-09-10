@@ -19,15 +19,17 @@ Last checked against a full suite run 2026-09-10.
 - **gRPC: a single message is capped at 4 MB** — on *both* the unary and streaming paths as of 2026-08-24. Previously the cap covered streaming only, so this is a **behaviour change for unary calls**: a message above 4 MB is now rejected where it used to be accepted. Raise `GRPC_MAX_MESSAGE_BYTES` in `Nghttp2.Grpc.StreamReader` if a deployment genuinely needs larger single messages. See [grpc.md](grpc.md#decoder-guards).
 - **gRPC: submessage nesting is capped at 100 levels** — `Deserialize` recurses per nested submessage, so a self-referential message type (how protobuf expresses trees) would otherwise let a crafted payload exhaust the stack, which is not catchable. Matches the mainstream protobuf default; real messages do not approach it.
 - **Password-protected private keys** — the `SSLKeyPassword` field wires `SSL_CTX_set_default_passwd_cb` but has never been exercised against an encrypted key. Treat as experimental.
-- **Graceful shutdown is validated on the thread driver only** — and the other
-  two are *untested*, not failing, which is a different thing from what this
-  entry used to say. `build-fpc.sh` stage 6 runs under the thread driver (stage
-  5 sets it, stage 6 inherits it) and passed 8/8 witnesses under h2load load on
-  2026-09-10, with stage 6b delivering all three connection shapes: 1 request,
-  4 on 4 connections, 8 streams on 1. The epoll engine appears only in stages
-  12–14, which run the regression suite rather than a shutdown, and IOCP is
-  Windows-only so no Linux stage can reach it. **No stage in this suite
-  exercises graceful shutdown on either event-loop engine.** An earlier version
-  of this entry reported `96/184` for epoll on stage 6; there is no epoll stage
-  6 to produce that, so treat the figure as unattributable and re-measure rather
-  than cite it. See [doc/graceful-shutdown.md](graceful-shutdown.md).
+- **Graceful shutdown is untested on IOCP** — and on IOCP only, as of
+  2026-09-10. The thread driver passes `build-fpc.sh` stage 6 (8/8 witnesses
+  under h2load) and stage 6b (all three connection shapes: 1 request, 4 on 4
+  connections, 8 streams on 1). The **epoll engine** passes the new stage 6c,
+  which is stage 6 with the event loop selected and an assertion that the driver
+  actually resolved — without that check a silent fallback to thread-per-
+  connection would report a green thread-driver drain as epoll coverage. IOCP is
+  Windows-only, so no Linux stage can reach it and the provider's `.bat` files
+  build or cross-compile rather than run the suite.
+
+  An earlier version of this entry reported `96/184` for epoll on stage 6. There
+  was no epoll stage 6 to produce that figure; it was unattributable, and 6c now
+  measures the thing it claimed to. Do not cite the old number.
+  See [doc/graceful-shutdown.md](graceful-shutdown.md).
