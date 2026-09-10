@@ -12,11 +12,11 @@ Validated at **runtime** on all three, not merely compiled:
 
 | Gate | Windows / Delphi | Linux / FPC 3.3.1 | Linux64 / Delphi |
 |---|---|---|---|
-| regression suite, h2c | compiles; run pending | **114/114** (2026-09-10) | 94/94 (pre-STREAM-1) |
-| regression suite, TLS | 106/106 (not re-measured) | **114/114** (2026-09-10) | — |
-| regression suite, mTLS | 106/106 (not re-measured) | **114/114** (2026-09-10) | — |
-| regression suite via epoll event loop — h2c / TLS / mTLS | n/a (IOCP) | **114/114 each** (2026-09-10) | — |
-| mTLS negative | — | rejected (thread + event loop) | — |
+| regression suite, h2c | **114/114** (2026-09-10) | **114/114** (2026-09-10) | 94/94 (pre-STREAM-1) |
+| regression suite, TLS | **114/114** (2026-09-10) | **114/114** (2026-09-10) | — |
+| regression suite, mTLS | **114/114** (2026-09-10) | **114/114** (2026-09-10) | — |
+| regression suite via event loop — h2c / TLS / mTLS | **114/114** IOCP, h2c (2026-09-10) | **114/114 each** epoll (2026-09-10) | — |
+| mTLS negative | rejected (2026-09-10) | rejected (thread + event loop) | — |
 | Streaming & SSE — content, ordering, concurrency | ✓ (checks 33–37, TLS + mTLS) | ✓ (checks 33–37) | — |
 | Streaming — **incremental arrival**, thread driver | ✓ gaps 63/69/68/69 ms, span 269 ms (cross-machine) | ✓ 5 events spanned 247 ms | — |
 | Streaming — **incremental arrival**, event loop | ✓ IOCP: gaps 63/62/63/62 ms, span 250 ms | ✓ epoll (stage 15) | — |
@@ -29,7 +29,7 @@ Validated at **runtime** on all three, not merely compiled:
 | curl smoke suite | 25/25 | 25/25 | — |
 | Protobuf codec (incl. repeated fields, M1c.2) | 75/75 | 75/75 | — |
 | Graceful shutdown — thread driver | ✓ (see WSL2 note) | ✓ (see WSL2 note) | — |
-| Graceful shutdown — event-loop (epoll/IOCP) | ⚠ IOCP not re-validated | ⚠ epoll 96/184 open | — |
+| Graceful shutdown — event-loop (epoll/IOCP) | ✓ **IOCP** (2026-09-10) | ✓ **epoll**, stage 6c (2026-09-10) | — |
 | Connection-thread leak (25 000 conns) | — | ✓ flat | — |
 | Two-stage GOAWAY (frame trace) | — | ✓ | — |
 

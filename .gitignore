@@ -91,6 +91,10 @@ samples/tests/.venv/
 samples/grpc/HorseNghttp2GrpcDemo
 samples/grpc/HorseNghttp2GrpcTestClient
 
+# run-tests.bat writes its stage logs here. Relative rather than %TEMP%
+# because a quoted redirect target cannot survive `start "" /B cmd /c "..."`.
+samples/tests/_winlogs/
+
 # FPC binaries under samples/tests. These have NO extension -- an ELF built by
 # fpc is named after the .dpr with nothing appended -- so *.exe does not cover
 # them and neither does any suffix rule. Each one has to be named. This is the

@@ -130,6 +130,11 @@ goto :t_named
 call :build "!ROOT!\samples\tests" HorseNghttp2TestServer
 call :build "!ROOT!\samples\tests" HorseNghttp2TestClient
 call :build "!ROOT!\samples\tests" HorseNghttp2TlsTestServer
+REM DrainCheck was missing here until 2026-09-10, which made
+REM verify-drain-delivery.bat unrunnable: it refuses with "missing
+REM HorseNghttp2DrainCheck.exe - build it first" and no build target produced
+REM one. The Windows drain check existed and could not be run.
+call :build "!ROOT!\samples\tests" HorseNghttp2DrainCheck
 goto :summary
 
 :t_grpc
@@ -141,6 +146,7 @@ goto :summary
 call :build "!ROOT!\samples\tests" HorseNghttp2TestServer
 call :build "!ROOT!\samples\tests" HorseNghttp2TestClient
 call :build "!ROOT!\samples\tests" HorseNghttp2TlsTestServer
+call :build "!ROOT!\samples\tests" HorseNghttp2DrainCheck
 call :build "!ROOT!\samples\grpc"  HorseNghttp2GrpcDemo
 call :build "!ROOT!\samples\grpc"  HorseNghttp2GrpcTestClient
 goto :summary

@@ -1,5 +1,35 @@
 # Testing & benchmarking
 
+## The whole suite, one command
+
+**Linux / FPC** — 19 stages, 37 checks:
+
+```bash
+cd samples/tests
+bash build-fpc.sh          # run the WORKSPACE copy; see the note in doc/
+```
+
+**Windows / Delphi** — 8 gating stages:
+
+```bat
+cd samples\tests
+run-tests.bat
+```
+
+`run-tests.bat` builds through `scripts\build-dcc.bat all`, stages the
+executables beside the TLS fixtures, then runs the 114-check suite over h2c,
+TLS and mTLS (positive **and** negative), gRPC, the suite again via the IOCP
+event loop, and graceful shutdown on **both** the thread driver and IOCP.
+
+Two stages are **not** ported and the script says so at the end rather than
+ending quietly: streaming timing and WS-8441, which need `curl -N` timing and a
+Python with `h2`. Those remain Linux/FPC only.
+
+Exit codes: `0` all gating stages passed, `1` a stage failed, `2` setup problem
+(no dcc64, port busy, build failed), `3` libnghttp2 absent — in which case
+**nothing ran**, and the script prints a block saying so rather than reporting a
+green run over an untested transport.
+
 ## HTTP/2 smoke suite (25 checks)
 
 Quick loop on Windows:
