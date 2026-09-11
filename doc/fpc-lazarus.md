@@ -20,13 +20,14 @@ either source tree. The real 3.2.2 gaps were `TCustomAttribute` (gRPC only) and
 two runtime defects — `TThread.ProcessorCount` returning 1, and a stream-writer
 factory registration order bug in Horse core.*
 
-> **The 3.2.2 results above assume a patched Horse.** The stream-writer factory
-> fix lives in Horse core and is still an open pull request
-> ([#552](https://github.com/HashLoad/horse/pull/552)). On stock Horse + FPC
-> 3.2.2, streaming and SSE return total silence — no headers, no body, no
-> error — because `FStreamWriterFactory` is a last-writer-wins class var whose
-> winner depends on unit initialization order, and 3.2.2 orders it differently
-> from trunk. See [Horse core requirements](../README.md#horse-core-requirements).
+> **The 3.2.2 results above require Horse ≥ 3.3.5.** The stream-writer factory
+> fix lives in Horse core and shipped in
+> [PR #552](https://github.com/HashLoad/horse/pull/552); no patched fork is
+> needed any more. On an OLDER Horse + FPC 3.2.2, streaming and SSE return total
+> silence — no headers, no body, no error — because `FStreamWriterFactory` is a
+> last-writer-wins class var whose winner depends on unit initialization order,
+> and 3.2.2 orders it differently from trunk. See
+> [Horse core requirements](../README.md#horse-core-requirements).
 
 ## gRPC on FPC
 

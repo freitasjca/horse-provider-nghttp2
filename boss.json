@@ -8,7 +8,7 @@
   "browsingpath": "src/",
   "projects": [],
   "dependencies": {
-    "github.com/HashLoad/horse": ">=3.3.0",
+    "github.com/HashLoad/horse": ">=3.3.5",
     "github.com/freitasjca/Delphi-nghttp2": ">=1.10.0"
   }
 }

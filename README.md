@@ -49,7 +49,7 @@ HTTP/1.1 endpoint, use one of Horse's other transports.
 ### Requirements
 
 - Delphi 10.4 Sydney or later / FPC 3.2.2 or trunk 3.3.1 — **gRPC needs trunk**; build 3.2.2 with `-dHORSE_NGHTTP2_NO_GRPC` (see [doc/fpc-lazarus.md](doc/fpc-lazarus.md))
-- Horse ≥ 3.3.0, **patched** — see [Horse core requirements](#horse-core-requirements) below. Stock Horse is not enough: without the patches, WebSocket and streaming fail *silently*
+- Horse **≥ 3.3.5** — stock, unpatched. Earlier versions are not enough: on 3.3.4 and below, WebSocket and streaming fail *silently* (see [Horse core requirements](#horse-core-requirements))
 - [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) **≥ 1.10.0** — this is the floor `boss.json` declares, and it is a *correctness* floor rather than an API one. Below 1.10.0, proto3 `uint32`/`uint64` values above 2^31 were silently encoded as the wrong bytes (FIX-PROTO-UINT32-1): ordinary use of a common field type, no opt-in required, and the error is invisible on both sides because it round-trips through our own codec perfectly. The API minimums are lower and are already implied by it — `EnableConnectProtocol` for WebSocket (1.2.0), `Nghttp2CpuCount` for FPC 3.2.2 (1.3.0), `BeginRequest` for the drain test client (1.4.0). Boss resolves the newest version satisfying the floor, so there is nothing to bump when the library releases.
 - libnghttp2 ≥ 1.59 — **required at run time**, dynamic-loaded (`nghttp2.dll` / `libnghttp2.so.14` / `libnghttp2.dylib`); see [getting-nghttp2-windows.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-windows.md) / [getting-nghttp2-linux.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-linux.md)
 - OpenSSL 3.x or 1.1 for TLS only (auto-detected at runtime)
@@ -64,40 +64,40 @@ boss install github.com/freitasjca/horse-provider-nghttp2
 
 ### Horse core requirements
 
-This provider needs five files from Horse core that upstream does not yet carry.
-Four of them are open pull requests against `HashLoad/horse`. Until those merge,
-use the **`nghttp2-required`** branch of
-[`freitasjca/horse`](https://github.com/freitasjca/horse) — it is current
-upstream plus exactly these five files, and nothing else:
+**Nothing to do beyond using Horse ≥ 3.3.5.** Everything this provider needs is
+upstream and released — no fork, no branch, no patched files.
 
 ```
-git clone -b nghttp2-required https://github.com/freitasjca/horse.git
+boss install github.com/HashLoad/horse
 ```
 
-| Horse core file | Provides | Upstream |
+This section used to tell you to clone a `nghttp2-required` branch carrying five
+patched core files. All five are now in stock Horse, verified at the published
+3.3.5 artefact by each fix's own identifier rather than by its PR being marked
+merged:
+
+| Horse core file | Provides | Landed in |
 |---|---|---|
-| `Horse.pas` | NGHTTP2 provider hooks — without them the define does not select this provider | fork-only, no PR yet |
-| `Horse.Response.pas` | Adds `HORSE_PROVIDER_NGHTTP2` to the stream-writer factory guard | [PR #552](https://github.com/HashLoad/horse/pull/552) |
+| `Horse.pas` | the `HORSE_PROVIDER_NGHTTP2` selector and its mutual-exclusion guards — without it the define does not select this provider | [PR #555](https://github.com/HashLoad/horse/pull/555) |
+| `Horse.Response.pas` | adds `HORSE_PROVIDER_NGHTTP2` to the stream-writer factory guard | [PR #552](https://github.com/HashLoad/horse/pull/552) |
 | `Horse.Provider.Socket.WebSocket.pas` | epoll transport no longer treats `EAGAIN` as a disconnect | [PR #549](https://github.com/HashLoad/horse/pull/549) |
 | `Horse.Request.pas` | `SetWebSocketUpgrade`, so RFC 8441 extended CONNECT is recognised as a WebSocket | [PR #550](https://github.com/HashLoad/horse/pull/550) |
 | `Horse.Core.WebSocket.pas` | FPC-only `FeedBytes` interface-to-class cast | [PR #551](https://github.com/HashLoad/horse/pull/551) |
 
-As each PR merges, its file drops off this list and the branch is rebased onto
-the newer upstream. When all four have merged, only `Horse.pas` remains.
+**Why the floor is 3.3.5 and not 3.3.0.** On an older Horse the provider still
+compiles, and the failures are *silent* — which is the reason to state a version
+rather than let people discover it:
 
-**All four failures are silent**, which is why this list matters more than it
-looks:
-
-- **Without #552**, every streaming and SSE request returns *nothing* — no
+- **Before #552**, every streaming and SSE request returns *nothing* — no
   headers, no body, no error, no log line. `FStreamWriterFactory` is a
   last-writer-wins class var set from two unit `initialization` sections, so
   which one survives depends on the compiler's dependency walk. On FPC trunk it
   happened to resolve correctly; on FPC 3.2.2 it does not.
-- **Without #549 or #551**, the RFC 8441 WebSocket handshake completes and then
+- **Before #549 / #551**, the RFC 8441 WebSocket handshake completes and then
   the connection simply stops carrying frames.
-
-Only `Horse.pas` is needed for plain HTTP/2 and gRPC. Streaming needs #552;
-WebSocket needs #549 + #550 + #551.
+- **Before #566** (3.3.5), Windows/FPC enabled keep-alive while `TCP_NODELAY`
+  was still `{$IFDEF UNIX}`-only, giving ~200 ms stalls on reused connections.
+  Linux was unaffected, so this one hides from a Linux-only CI.
 
 ### Activation
 
