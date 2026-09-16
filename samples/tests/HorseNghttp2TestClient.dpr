@@ -636,6 +636,18 @@ begin
   Check('RemoteAddr non-empty',
     (Pos('"remoteAddr":"', R.Body) > 0) and (Pos('"remoteAddr":""', R.Body) = 0),
     R.Body);
+  // [CL2] :scheme must name the transport actually in use — https over TLS,
+  // http on h2c (RFC 7540 §8.1.2.3). The server echoes the pseudo-header it
+  // received, so this asserts what the CLIENT advertised. The TLS and mTLS
+  // stages are what give it teeth: the client used to hardcode 'http', which
+  // passes on h2c and is wrong on every TLS run. The closing quote in the
+  // needle keeps "http" from matching "https".
+  if GUseTls then
+    Check('scheme = https (TLS transport)',
+      Pos('"scheme":"https"', R.Body) > 0, R.Body)
+  else
+    Check('scheme = http (h2c transport)',
+      Pos('"scheme":"http"', R.Body) > 0, R.Body);
 
   // ─── 26 ────────────────────────────────────────────────────────────────
   Section('26  OPTIONS /raw/cors  (Horse.CORS pre-flight shape)');

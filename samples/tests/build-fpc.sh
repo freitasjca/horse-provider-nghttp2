@@ -22,8 +22,8 @@
 #       + Nghttp2.Engine.Epoll   — nothing references it, so it is only ever
 #                                  compiled because this stage names it
 #    3  test server              — full provider + Horse
-#    4  test client              — the 114-check suite binary
-#    5  run 114-check suite                        (thread driver, h2c)
+#    4  test client              — the 115-check suite binary
+#    5  run 115-check suite                        (thread driver, h2c)
 #    6  run graceful-shutdown test (needs h2load)   THREAD driver
 #    6b graceful-shutdown delivery, single-connection shapes
 #    6c graceful shutdown on the EPOLL engine      (gates; verifies the
@@ -33,13 +33,13 @@
 #                                                   pass as epoll cover)
 #    7  connection-thread leak growth
 #    8  two-stage GOAWAY frame trace
-#    9  114-check suite over TLS
-#   10  114-check suite over mTLS, positive + negative
+#    9  115-check suite over TLS
+#   10  115-check suite over mTLS, positive + negative
 #   11  gRPC over h2c
-#   12  114-check suite via the epoll EVENT LOOP   (h2c)
-#   13  114-check suite over TLS via the EVENT LOOP  (B4d: handshake driven by
+#   12  115-check suite via the epoll EVENT LOOP   (h2c)
+#   13  115-check suite over TLS via the EVENT LOOP  (B4d: handshake driven by
 #       HandshakeStep from RunOnce, reads via ReadNB, writes via WriteNB)
-#   14  114-check suite over mTLS via the EVENT LOOP, positive AND negative —
+#   14  115-check suite over mTLS via the EVENT LOOP, positive AND negative —
 #       the negative is the one that matters: a resumable handshake that
 #       wrongly SUCCEEDS passes every positive check ever written
 #   15  streaming arrives INCREMENTALLY (curl -N timing) — the one streaming
@@ -252,7 +252,7 @@ require_port_free() {   # <port>
 }
 
 # run_client_suite <logname> <label> <target-url> [extra client args...]
-# The 114-check client against one endpoint. Same everywhere, so the TLS and
+# The 115-check client against one endpoint. Same everywhere, so the TLS and
 # mTLS stages differ only in their arguments.
 run_client_suite() {
   local logname=$1 label=$2 target=$3
@@ -457,15 +457,15 @@ if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
   exit $FAIL
 fi
 
-# ── 5 · the 114-check suite ───────────────────────────────────────────────────
+# ── 5 · the 115-check suite ───────────────────────────────────────────────────
 echo
-echo "── 5  114-check suite (h2c) ─────────────────────────────────────────────"
+echo "── 5  115-check suite (h2c) ─────────────────────────────────────────────"
 # </dev/null on every binary: these test programs end with a
 # "Press ENTER to exit..." ReadLn, which parks the script forever when they
 # inherit the terminal. EOF makes that read return immediately.
 # timeout: a hang must fail the stage, not the run.
 if ! require_port_free "$PORT"; then
-  fail "114-check suite (port $PORT occupied before we started)"
+  fail "115-check suite (port $PORT occupied before we started)"
   echo
   echo "Stages: $PASS passed, $FAIL failed"
   exit $FAIL
@@ -477,11 +477,11 @@ SERVERS+=("$SRV")
 sleep 0.6
 
 if timeout 120 ./HorseNghttp2TestClient < /dev/null > "$WORK/client.log" 2>&1; then
-  pass "114-check suite"
+  pass "115-check suite"
 elif [[ $? -eq 124 ]]; then
-  fail "114-check suite (timed out after 120s)"
+  fail "115-check suite (timed out after 120s)"
 else
-  fail "114-check suite"
+  fail "115-check suite"
 fi
 grep -E "passed, .* failed" "$WORK/client.log" | tail -1 | sed 's/^/    /'
 kill -TERM "$SRV" 2>/dev/null || true
@@ -890,7 +890,7 @@ fi
 # No rebuild: TLS is a runtime choice, so the binaries from stages 3 and 4
 # serve it unchanged. Only the certs and libssl need to be present.
 echo
-echo "── 9  114-check suite over TLS ──────────────────────────────────────────"
+echo "── 9  115-check suite over TLS ──────────────────────────────────────────"
 if [[ ! -f tls/cert.pem || ! -f tls/key.pem ]]; then
   skip "tls/cert.pem or tls/key.pem missing — run: bash gen-tls-cert.sh"
 elif ! wait_port_free "$TLS_PORT" 15; then
@@ -906,7 +906,7 @@ else
     fail "TLS server exited at startup"
     tail -4 "$WORK/tls-server.log" | sed 's/^/    | /'
   else
-    run_client_suite tls-client "114-check suite over TLS" "https://127.0.0.1:$TLS_PORT"
+    run_client_suite tls-client "115-check suite over TLS" "https://127.0.0.1:$TLS_PORT"
   fi
   kill -TERM "$SRV" 2>/dev/null || true
   wait "$SRV" 2>/dev/null || true
@@ -918,7 +918,7 @@ fi
 # under test. Reversed, a negative "pass" would also be produced by a server
 # that never started.
 echo
-echo "── 10  114-check suite over mTLS (positive + negative) ──────────────────"
+echo "── 10  115-check suite over mTLS (positive + negative) ──────────────────"
 if [[ ! -f tls/ca.pem || ! -f tls/client-cert.pem || ! -f tls/client-key.pem ]]; then
   skip "tls/ca.pem or client cert/key missing — run: bash gen-tls-cert.sh"
 elif ! wait_port_free "$TLS_PORT" 15; then
@@ -1029,14 +1029,14 @@ else
   popd > /dev/null
 fi
 
-# ── 12 · 114-check suite driven by the epoll event loop ───────────────────────
+# ── 12 · 115-check suite driven by the epoll event loop ───────────────────────
 #
 # Every stage above exercises the THREAD driver. This is the only one that
 # runs the epoll engine, and until it exists Nghttp2.Engine.Epoll is compiled
 # but never executed — the compile step in stage 2 proves it links, nothing
 # more.
 #
-# Same 114 checks, same client, same routes; only the connection driver
+# Same 115 checks, same client, same routes; only the connection driver
 # changes. That is deliberate: a dedicated engine test would be a second
 # definition of correct, and the point is that the engine must be
 # indistinguishable from the thread driver at the protocol level.
@@ -1044,7 +1044,7 @@ fi
 # h2c only. A TLS listener falls back to thread-per-connection by design, so
 # an `eventloop tls` run would silently measure the thread driver again.
 echo
-echo "── 12  114-check suite via epoll event loop (h2c) ────────────────────────"
+echo "── 12  115-check suite via epoll event loop (h2c) ────────────────────────"
 if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
   skip "test programs did not build"
 elif ! require_port_free "$PORT"; then
@@ -1066,19 +1066,19 @@ else
 
     # The gate that makes this stage mean anything. `eventloop` is a REQUEST
     # that degrades silently — wrong platform, engine unit not linked — and a
-    # fallback run passes all 114 checks while testing the driver that stage 5
+    # fallback run passes all 115 checks while testing the driver that stage 5
     # already covered. Without this check the stage would report green for
     # code that never ran.
     if grep -q "RESOLVED: epoll event loop" "$WORK/eventloop-server.log"; then
       if timeout 120 ./HorseNghttp2TestClient \
            < /dev/null > "$WORK/eventloop-client.log" 2>&1; then
-        pass "114-check suite via event loop"
+        pass "115-check suite via event loop"
       elif [[ $? -eq 124 ]]; then
-        fail "114-check suite via event loop (timed out after 120s)"
+        fail "115-check suite via event loop (timed out after 120s)"
         echo "    a hang here is the engine, not the protocol — suspect a"
         echo "    connection parked with output held and no writable wake"
       else
-        fail "114-check suite via event loop"
+        fail "115-check suite via event loop"
       fi
       grep -E "passed, .* failed" "$WORK/eventloop-client.log" | tail -1 | sed 's/^/    /'
     else
@@ -1094,7 +1094,7 @@ fi
 
 # ── 13 · TLS driven by the epoll event loop ──────────────────────────────────
 #
-# Stage 9 runs the same 114 checks over TLS on the THREAD driver. This runs them
+# Stage 9 runs the same 115 checks over TLS on the THREAD driver. This runs them
 # on the engine, which is a different code path end to end: the handshake is
 # driven a step at a time from RunOnce via HandshakeStep, reads go through
 # ReadNB, and writes are encrypted with WriteNB before the socket sees them.
@@ -1103,7 +1103,7 @@ fi
 # DoHandshake, which on a shared loop thread would stall every other connection
 # that loop owned.
 echo
-echo "── 13  114-check suite over TLS via epoll event loop ─────────────────────"
+echo "── 13  115-check suite over TLS via epoll event loop ─────────────────────"
 if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
   skip "test programs did not build"
 elif [[ ! -f tls/cert.pem || ! -f tls/key.pem ]]; then
@@ -1125,11 +1125,11 @@ else
 
     # The gate that gives this stage meaning. Before B4d the engine DECLINED
     # to own accept whenever a TLS context was set, so `eventloop tls` fell
-    # back to the thread driver — passing all 114 checks while re-testing
+    # back to the thread driver — passing all 115 checks while re-testing
     # stage 9. Without this check a regression to that behaviour reads green.
     if grep -q "RESOLVED: epoll event loop" "$WORK/eventloop-tls.log"; then
       run_client_suite eventloop-tls-client \
-        "114-check suite over TLS via event loop" "https://127.0.0.1:$TLS_PORT"
+        "115-check suite over TLS via event loop" "https://127.0.0.1:$TLS_PORT"
     else
       fail "TLS + eventloop requested but engine NOT resolved — would have retested stage 9"
     fi
@@ -1155,7 +1155,7 @@ fi
 # should fail passes every positive check ever written — this is the only
 # stage that would catch it on the engine.
 echo
-echo "── 14  114-check suite over mTLS via epoll event loop ────────────────────"
+echo "── 14  115-check suite over mTLS via epoll event loop ────────────────────"
 if [[ $SERVER_OK -eq 0 || $CLIENT_OK -eq 0 ]]; then
   skip "test programs did not build"
 elif [[ ! -f tls/ca.pem || ! -f tls/client-cert.pem || ! -f tls/client-key.pem ]]; then
@@ -1229,7 +1229,7 @@ echo "── 15  streaming delivers incrementally (curl -N timing) ────�
 #
 # It is worth spelling out how expensive that is to diagnose, because it is why
 # this gate exists. On 2026-08-23 the missing guard produced NINE failing
-# stages on FPC 3.2.2 — 5, 9, 10, 12, 13, 14 (the 114-check client hanging on
+# stages on FPC 3.2.2 — 5, 9, 10, 12, 13, 14 (the 115-check client hanging on
 # check 33, /stream/pull) plus 15 and 16 — and every one of them read as a
 # protocol or transport defect. Trunk was green throughout, because there the
 # initialization order happened to favour the provider. A race you are winning

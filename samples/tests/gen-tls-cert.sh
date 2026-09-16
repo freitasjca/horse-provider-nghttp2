@@ -5,7 +5,7 @@
 #
 #  Produces (all in tls/ next to this script):
 #    Server-side TLS (needed for `HorseNghttp2TestServer.exe tls`):
-#      cert.pem       — server cert, SAN=127.0.0.1,::1,localhost, 30-day validity
+#      cert.pem       — server cert, SAN=127.0.0.1,::1,localhost, 10-year validity
 #      key.pem        — server RSA 2048-bit private key (unencrypted)
 #    mTLS extras (needed for `HorseNghttp2TestServer.exe mtls`):
 #      ca.pem         — self-signed CA (signs the client cert)
@@ -16,8 +16,18 @@
 #  Runs on: any POSIX shell with openssl on PATH. On Windows, use Git Bash /
 #  WSL, or run the equivalent openssl commands from PowerShell/cmd manually.
 #
-#  Regenerate whenever the cert expires (30 days). Don't ship these files —
-#  they're strictly for local testing (SAN=127.0.0.1, not a real hostname).
+#  Validity is 10 years, deliberately. These were 30-day certs, and the expiry
+#  was pure false alarm: plain TLS kept passing (the test client does not verify
+#  the server), while both mTLS POSITIVE stages collapsed to 5 passed / 110
+#  failed the moment the client cert lapsed — a failure that looks like the last
+#  code change and is not. Nothing here is protected by an expiry date: the key
+#  is unencrypted, the CA is trusted by nothing, and SAN=127.0.0.1 is not a real
+#  hostname.
+#
+#  The generated files ARE tracked in this repo, so a fresh clone can run the
+#  TLS and mTLS stages without openssl. Re-run this script only to rotate them,
+#  and commit the result — leaving regenerated certs uncommitted is what leaves
+#  the checked-out fixtures expired.
 # ============================================================================
 
 set -euo pipefail
@@ -39,7 +49,7 @@ echo "── Server cert (TLS) ────────────────�
 openssl req -x509 -newkey rsa:2048 \
     -keyout "${CERT_DIR}/key.pem" \
     -out "${CERT_DIR}/cert.pem" \
-    -days 30 -nodes \
+    -days 3650 -nodes \
     -subj "/CN=127.0.0.1/O=HorseNghttp2Test/OU=Server" \
     -addext "subjectAltName=IP:127.0.0.1,IP:::1,DNS:localhost" \
     2>&1 | grep -v "^\.\+$" || true
@@ -49,7 +59,7 @@ echo "── CA (signs client certs for mTLS) ───────────�
 openssl req -x509 -newkey rsa:2048 \
     -keyout "${CERT_DIR}/ca-key.pem" \
     -out "${CERT_DIR}/ca.pem" \
-    -days 30 -nodes \
+    -days 3650 -nodes \
     -subj "/CN=HorseNghttp2TestCA/O=HorseNghttp2Test/OU=CA" \
     2>&1 | grep -v "^\.\+$" || true
 
@@ -67,7 +77,7 @@ openssl x509 -req \
     -CAkey    "${CERT_DIR}/ca-key.pem" \
     -CAcreateserial \
     -out      "${CERT_DIR}/client-cert.pem" \
-    -days 30 \
+    -days 3650 \
     2>&1 | grep -v "^\.\+$" || true
 
 # Cleanup — CSR + serial file aren't needed at runtime

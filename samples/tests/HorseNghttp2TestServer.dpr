@@ -421,7 +421,7 @@ end;
 procedure RawWebRequestRoute(Req: THorseRequest; Res: THorseResponse);
 var
   LHasAdapter: Boolean;
-  LMethod, LHost, LPath, LCustom, LRemote: string;
+  LMethod, LHost, LPath, LCustom, LRemote, LScheme: string;
 begin
   // Assigned() requires an lvalue; property getters return an rvalue.
   // Use <> nil for property-based nil checks throughout.
@@ -433,13 +433,19 @@ begin
     LPath   := Req.RawWebRequest.PathInfo;
     LCustom := Req.RawWebRequest.GetFieldByName('X-Custom-Test');
     LRemote := Req.RawWebRequest.RemoteAddr;
+    // [CL2] The :scheme pseudo-header, echoed so the client can assert what it
+    // advertised. GetFieldByName passes the name straight to the HTTP/2 stream
+    // header table, so a pseudo-header works here even though the bridge
+    // deliberately keeps them OUT of Req.Headers (they are not real headers).
+    // IHorseRawRequest has no scheme accessor and is not patched for this.
+    LScheme := Req.RawWebRequest.GetFieldByName(':scheme');
   end;
   Res.ContentType('application/json; charset=utf-8')
      .Send(Format(
-       '{"hasAdapter":%s,"method":"%s","host":"%s","pathInfo":"%s","customHeader":"%s","remoteAddr":"%s"}',
+       '{"hasAdapter":%s,"method":"%s","host":"%s","pathInfo":"%s","customHeader":"%s","remoteAddr":"%s","scheme":"%s"}',
        [BoolToStr(LHasAdapter, True).ToLower,
         JsonEsc(LMethod), JsonEsc(LHost), JsonEsc(LPath),
-        JsonEsc(LCustom), JsonEsc(LRemote)]));
+        JsonEsc(LCustom), JsonEsc(LRemote), JsonEsc(LScheme)]));
 end;
 
 procedure RawWebResponseRoute(Req: THorseRequest; Res: THorseResponse);
