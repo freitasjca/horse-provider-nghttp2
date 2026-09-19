@@ -50,6 +50,11 @@
 #   17  WS-8441 SETTINGS_ENABLE_CONNECT_PROTOCOL actually reaches the wire
 #   18  WS-8441 end-to-end upgrade — the only check that performs one, via
 #       python3 + h2 (no C tool in this suite implements RFC 8441)
+#   19  compile-guard cases — invalid define combinations are rejected; valid
+#       FPC cross-product combinations (DAEMON, LCL) compile
+#   20  CL3b client RSS bounded — TNghttp2Client.ReadChunk downloads 64 MB from
+#       the async provider without buffering it (complements stage 16's
+#       server-side bound)
 #
 #  Stages 1-11 all exercise the thread-per-connection driver. Stage 12 is the
 #  only one that executes the epoll engine, and it fails rather than passes if
@@ -1698,6 +1703,68 @@ EOF
     echo "  ── the probe itself is broken, so the three checks above prove"
     echo "     nothing — they pass by failing, and everything is failing."
     tail -6 "$GUARD_OUT/guard_ok.log" | sed 's/^/      | /'
+  fi
+fi
+
+# ── 20 · CL3b — client RSS bounded during 64 MB streaming download ────────────
+# Stage 16 proved the SERVER's RSS stays bounded (BACKPRESSURE-1, curl as a
+# slow consumer). This stage adds the CLIENT side: TNghttp2Client.ReadChunk
+# streams 64 MB from the provider's /stream/flood without buffering it.
+#
+# Why async dispatch matters here:
+#   Under inline dispatch AwaitDrainRoom is a no-op, so the server queues the
+#   whole 64 MB before the pump runs — "inline streaming is unbounded by
+#   construction" (Nghttp2.Session). Asserting a client memory ceiling against
+#   an inline server would measure a mode that never promised one. The provider
+#   server uses the default worker pool (async), so this gate gets both sides.
+#
+# Asserts:
+#   • total bytes received = 64 MB          (correctness — nothing dropped)
+#   • response status 200                   (route reachable)
+#   • client VmHWM growth < 8 MB           (Linux only — unbuffered delivery)
+#
+# The gate program lives in patches/Delphi-nghttp2/tests/ because it uses only
+# Nghttp2.Client — no Horse or provider units. It is compiled with the same
+# FLAGS as the provider tests so the FPC stdlib paths resolve.
+echo
+echo "── 20  CL3b client RSS bounded on 64 MB streaming download ─────────────"
+DNG_TESTS="$ROOT/patches/Delphi-nghttp2/tests"
+if [[ ! -f "$DNG_TESTS/Nghttp2FloodRead.dpr" ]]; then
+  skip "Nghttp2FloodRead.dpr not found at $DNG_TESTS/"
+elif ! wait_port_free "$PORT" 15; then
+  skip "port $PORT still bound"
+else
+  FROUT="$WORK/flood-read"
+  mkdir -p "$FROUT"
+  if ! "$TRUNK" $FLAGS \
+         -FU"$FROUT" -FE"$FROUT" \
+         "$DNG_TESTS/Nghttp2FloodRead.dpr" > "$FROUT/build.log" 2>&1 \
+       || [[ ! -x "$FROUT/Nghttp2FloodRead" ]]; then
+    fail "Nghttp2FloodRead.dpr did not compile"
+    grep -E "Error|Fatal" "$FROUT/build.log" | head -12 | sed 's/^/    /'
+    echo "    full log: $FROUT/build.log"
+  else
+    stdbuf -o0 -e0 ./HorseNghttp2TestServer < /dev/null > "$WORK/flood-server.log" 2>&1 &
+    SRV=$!
+    SERVERS+=("$SRV")
+    sleep 0.8
+    if ! kill -0 "$SRV" 2>/dev/null; then
+      fail "CL3b server exited at startup"
+      tail -4 "$WORK/flood-server.log" | sed 's/^/    | /'
+    else
+      timeout 90 "$FROUT/Nghttp2FloodRead" 127.0.0.1 "$PORT" < /dev/null \
+        | sed 's/^/  /'
+      FR_RC=${PIPESTATUS[0]}
+      case "$FR_RC" in
+        0)   pass "CL3b: ReadChunk 64 MB — RSS bounded, stream complete" ;;
+        3)   skip "libnghttp2 absent or server not reachable" ;;
+        124) fail "CL3b: timed out after 90 s — ReadChunk did not complete" ;;
+        *)   fail "CL3b: 64 MB streaming download did not behave as specified" ;;
+      esac
+    fi
+    kill -TERM "$SRV" 2>/dev/null || true
+    wait "$SRV" 2>/dev/null || true
+    wait_port_free "$PORT" 15 || true
   fi
 fi
 

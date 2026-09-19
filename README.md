@@ -1,6 +1,6 @@
 # horse-provider-nghttp2
 
-**Status: v1.9.3 — production-ready (h2c + TLS + mTLS + gRPC + streaming + WebSocket). Delphi 10.4+, FPC 3.2.2 and trunk 3.3.1** — gRPC needs trunk.
+**Status: v1.9.5 — production-ready (h2c + TLS + mTLS + gRPC + streaming + WebSocket). Delphi 10.4+, FPC 3.2.2 and trunk 3.3.1** — gRPC needs trunk.
 
 HTTP/2-native transport provider for [Horse](https://github.com/HashLoad/horse), built on [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) and the C library [libnghttp2](https://nghttp2.org/). Drop-in replacement for the default Indy transport — activate with one compiler define, keep your existing routes and middleware unchanged.
 
@@ -50,7 +50,7 @@ HTTP/1.1 endpoint, use one of Horse's other transports.
 
 - Delphi 10.4 Sydney or later / FPC 3.2.2 or trunk 3.3.1 — **gRPC needs trunk**; build 3.2.2 with `-dHORSE_NGHTTP2_NO_GRPC` (see [doc/fpc-lazarus.md](doc/fpc-lazarus.md))
 - Horse **≥ 3.3.5** — stock, unpatched. Earlier versions are not enough: on 3.3.4 and below, WebSocket and streaming fail *silently* (see [Horse core requirements](#horse-core-requirements))
-- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) **≥ 1.10.0** — this is the floor `boss.json` declares, and it is a *correctness* floor rather than an API one. Below 1.10.0, proto3 `uint32`/`uint64` values above 2^31 were silently encoded as the wrong bytes (FIX-PROTO-UINT32-1): ordinary use of a common field type, no opt-in required, and the error is invisible on both sides because it round-trips through our own codec perfectly. The API minimums are lower and are already implied by it — `EnableConnectProtocol` for WebSocket (1.2.0), `Nghttp2CpuCount` for FPC 3.2.2 (1.3.0), `BeginRequest` for the drain test client (1.4.0). Boss resolves the newest version satisfying the floor, so there is nothing to bump when the library releases.
+- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) **≥ 1.20.0** — this is the floor `boss.json` declares, and it is a *correctness* floor rather than an API one. Below 1.20.0, `PushStreamData` reset the read cursor in the streaming buffer to 0 after every append (CL3b), causing `ReadResponseBodyCallback` to re-read from the start of the buffer on every pump — the buffer grew without bound and the worker deadlocked permanently under slow-client conditions. Any streaming or SSE route is affected; the failure is silent on the server side and surfaces as a hung connection on the client. Boss resolves the newest version satisfying the floor, so there is nothing to bump when the library releases.
 - libnghttp2 ≥ 1.59 — **required at run time**, dynamic-loaded (`nghttp2.dll` / `libnghttp2.so.14` / `libnghttp2.dylib`); see [getting-nghttp2-windows.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-windows.md) / [getting-nghttp2-linux.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-linux.md)
 - OpenSSL 3.x or 1.1 for TLS only (auto-detected at runtime)
 

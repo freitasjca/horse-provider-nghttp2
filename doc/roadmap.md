@@ -34,7 +34,8 @@ All items marked **✓** ship in the v1.0.0 public release. Internal milestone l
 | **Incremental inbound transport** (INBOUND-1) | **✓ transport layer** — `ReadInbound` / `AppendInbound` / `MarkInboundEnded` on `INghttp2Stream`, plus `OnShouldStreamInbound` which moves dispatch from END_STREAM to HEADERS for opted-in streams. Regression-clean, and now exercised by M6b's client-streaming and bidi paths. |
 | **gRPC — client-streaming + bidirectional RPCs** | **✓** (M6b — `RegisterClientStream` / `RegisterBidiStream`; 35/35 on FPC 3.3.1) |
 | **WebSocket over HTTP/2** (RFC 8441 extended CONNECT) | **DONE — validated end-to-end 2026-08-21.** `build-fpc.sh` stage 18, 4/4: extended CONNECT accepted (`:status 200`), server frame delivered, masked client frame round-tripped as `echo:hello`. Required two Horse core fixes, upstreamed as HashLoad/horse PR #551 (FPC-only `FeedBytes` interface-to-class cast) and PR #549 (epoll transport treating `EAGAIN` as a disconnect, which masked the first). See [websocket.md](websocket.md). |
-| gRPC — map fields, unsigned / ZigZag / fixed scalar variants | planned |
+| **gRPC — ZigZag / fixed scalar variants** (`sint32` `sint64` `fixed32` `fixed64` `sfixed32` `sfixed64`) | **✓** (WIRE-FORM-1 — Delphi-nghttp2 1.20.0; `TProtoMemberWireForm` selects the encoding per field; protogen emits the correct attribute for all six types automatically) |
+| gRPC — map fields | planned |
 | gRPC — `.proto` → `.pas` code generator | planned |
 | **Streaming — producer backpressure** | **✓** (BACKPRESSURE-1 — 1 MB high / 256 KB low watermarks; stage 16 streams 17 MB with 2.9 MB peak RSS growth) |
 | HTTP/3 over QUIC | **investigated, deferred** — see below |
@@ -79,7 +80,7 @@ around that gets harder:
 
 ### And this provider has open work first
 
-gRPC lacks map fields, the unsigned/ZigZag/fixed scalar variants, and codegen.
+gRPC lacks map fields and codegen.
 Starting a second protocol widens the surface faster than validation can
 follow — and the
 expensive half of this work has consistently been *proving* behaviour, not
