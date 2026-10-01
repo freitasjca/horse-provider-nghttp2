@@ -15,7 +15,9 @@ All items marked **✓** ship in the v1.0.0 public release. Internal milestone l
 | Smoke test server + curl-driven suite | **✓** |
 | 114-check parity suite | **✓** (114/114 across six transport configurations) |
 | TLS + ALPN — server + client (OpenSSL 3.x / 1.1.x auto-detect) | **✓** |
-| mTLS (client cert verification) | **✓** |
+| mTLS (client cert verification) | **✓** (1.10.0: `SSLVerifyPeer` without `SSLCACertFile` now refuses to start — it used to run with no client verification) |
+| TLS 1.2 cipher restriction (`SSLCipherList`) | **✓** (1.10.0 — accepted and ignored before; now applied, and verified on the wire by stage 10b) |
+| TLS 1.3 cipher suites | planned — separate OpenSSL call; needs `SSLCipherSuitesTLS13` in Horse's shared config record (`plans/tls13-cipher-suite-split.md` Phase 2) |
 | Cross-product app-type units — Delphi (VCL / Daemon / Windows Service) | **✓** |
 | Cross-product app-type units — FPC (Daemon / LCL / HTTPApplication) | **✓** |
 | FPC trunk 3.3.1 — full parity (HTTP/2 + gRPC + TLS + mTLS) | **✓** |

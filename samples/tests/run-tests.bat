@@ -175,6 +175,12 @@ call :run_suite "114-check suite over TLS" suite-tls "tls" "https://127.0.0.1:%T
 REM -- 10. mTLS, positive and negative -----------------------------------------
 call :run_mtls
 
+REM -- 10b. TLS 1.2 cipher rules on the wire (TLSCIPHER-1) ---------------------
+REM openssl s_client is the independent peer, as in build-fpc.sh stage 10b.
+REM Same order: a control first, then each refusal preceded by a positive on
+REM the same server. The two startup cases need no openssl at all.
+call :run_ciphers
+
 REM -- 11. gRPC over h2c -------------------------------------------------------
 call :run_grpc
 
@@ -289,6 +295,99 @@ HorseNghttp2GrpcTestClient.exe < nul > "%LOGDIR%\grpc-client.log" 2>&1
 if !ERRORLEVEL! EQU 0 ( call :pass "gRPC suite (h2c)" ) else ( call :fail "gRPC suite (h2c)" )
 findstr /C:"passed," "%LOGDIR%\grpc-client.log" 2>nul
 taskkill /F /IM HorseNghttp2GrpcDemo.exe >nul 2>&1
+exit /b 0
+
+REM Stage 10b. SSLCipherList was accepted and NEVER APPLIED until provider
+REM 1.10.0 (TLSCIPHER-1), and SSLVerifyPeer without SSLCACertFile started a
+REM server with NO client verification (FIX-NGHTTP2-VERIFYPEER-1). Judged by
+REM s_client's EXIT CODE plus its "Cipher is" / "ALPN protocol" lines - never
+REM by OpenSSL error text, which differs between 3.0 and 3.6.
+REM
+REM A startup refusal is checked on the PORT, not the process: tasklist
+REM truncates image names past 25 characters, and HorseNghttp2TestServer.exe
+REM is 26. A listener on the TLS port after the wait means the server started
+REM with a configuration it should have refused.
+:run_ciphers
+echo.
+echo -- TLS 1.2 cipher rules on the wire (openssl s_client peer)
+set "C_ALLOW=ECDHE-RSA-AES256-GCM-SHA384"
+set "C_DENY=ECDHE-RSA-AES128-GCM-SHA256"
+set "OPENSSL="
+for /f "delims=" %%I in ('where openssl.exe 2^>nul') do if not defined OPENSSL set "OPENSSL=%%I"
+if not defined OPENSSL (
+    call :skip "cipher rules on the wire - openssl.exe not on PATH; SSLCipherList NOT exercised"
+    goto :rc_startup
+)
+
+REM A - control: the DEFAULT server accepts the client B2 must be refused.
+start "" /B cmd /c "HorseNghttp2TestServer.exe tls < nul > %LOGDIR%\ciphers-a-server.log 2>&1"
+call :wait_bind
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_2 -cipher !C_DENY! -alpn h2 < nul > "%LOGDIR%\ciphers-a.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :rc_a_fail
+findstr /L /C:"Cipher is !C_DENY!" "%LOGDIR%\ciphers-a.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :rc_a_fail
+call :pass "control: default server negotiates !C_DENY! over TLS 1.2"
+goto :rc_a_done
+:rc_a_fail
+call :fail "control: default server did NOT accept a !C_DENY! client - B2 proves nothing"
+:rc_a_done
+call :stop_server
+
+REM B - server restricted to C_ALLOW.
+start "" /B cmd /c "HorseNghttp2TestServer.exe ciphers12=!C_ALLOW! < nul > %LOGDIR%\ciphers-b-server.log 2>&1"
+call :wait_bind
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_2 -cipher !C_ALLOW! -alpn h2 < nul > "%LOGDIR%\ciphers-b1.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :rc_b1_fail
+findstr /L /C:"Cipher is !C_ALLOW!" "%LOGDIR%\ciphers-b1.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :rc_b1_fail
+findstr /L /C:"ALPN protocol: h2" "%LOGDIR%\ciphers-b1.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :rc_b1_fail
+call :pass "configured cipher negotiated over TLS 1.2, ALPN h2"
+goto :rc_b1_done
+:rc_b1_fail
+call :fail "configured cipher !C_ALLOW! was NOT negotiated - see %LOGDIR%\ciphers-b1.log"
+:rc_b1_done
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_2 -cipher !C_DENY! -alpn h2 < nul > "%LOGDIR%\ciphers-b2.log" 2>&1
+if !ERRORLEVEL! EQU 0 (
+    call :fail "excluded cipher !C_DENY! was ACCEPTED - SSLCipherList not enforced"
+) else (
+    call :pass "excluded cipher !C_DENY! refused at the handshake"
+)
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_3 -alpn h2 < nul > "%LOGDIR%\ciphers-b3.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :rc_b3_fail
+findstr /L /C:"TLSv1.3" "%LOGDIR%\ciphers-b3.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :rc_b3_fail
+call :pass "TLS 1.3 still negotiates - TLS 1.2 rules left it alone"
+goto :rc_b3_done
+:rc_b3_fail
+call :fail "TLS 1.3 broken by a TLS 1.2 cipher rule - see %LOGDIR%\ciphers-b3.log"
+:rc_b3_done
+call :stop_server
+
+:rc_startup
+REM C / D - configurations the provider must refuse to start with.
+call :expect_refusal "invalid SSLCipherList" ciphers-c BOGUSCIPHER "ciphers12=BOGUSCIPHER"
+call :expect_refusal "SSLVerifyPeer without SSLCACertFile" ciphers-d SSLCACertFile "verify-no-ca"
+exit /b 0
+
+REM expect_refusal <label> <logname> <must-contain> <server-args>
+:expect_refusal
+start "" /B cmd /c "HorseNghttp2TestServer.exe %~4 < nul > %LOGDIR%\%~2.log 2>&1"
+call :wait_bind
+netstat -ano | findstr /R /C:":%TLS_PORT% .*LISTENING" >nul 2>&1
+if !ERRORLEVEL! EQU 0 (
+    call :fail "%~1 - the server STARTED and ran; the setting was accepted"
+    call :stop_server
+    exit /b 0
+)
+findstr /L /C:"FATAL" "%LOGDIR%\%~2.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :er_fail
+findstr /L /C:"%~3" "%LOGDIR%\%~2.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :er_fail
+call :pass "%~1 - refused at startup, naming %~3"
+exit /b 0
+:er_fail
+call :fail "%~1 - no FATAL line naming %~3; see %LOGDIR%\%~2.log"
 exit /b 0
 
 REM A fixed sleep, not a poll. `ping` is the portable batch sleep and is coarse,

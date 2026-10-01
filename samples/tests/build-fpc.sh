@@ -35,6 +35,10 @@
 #    8  two-stage GOAWAY frame trace
 #    9  115-check suite over TLS
 #   10  115-check suite over mTLS, positive + negative
+#   10b TLS 1.2 cipher rules ON THE WIRE (TLSCIPHER-1): openssl s_client
+#       must negotiate the configured cipher, be REFUSED an excluded one,
+#       still get TLS 1.3; bad rules and VerifyPeer-without-CA must stop
+#       the server at startup (FIX-NGHTTP2-VERIFYPEER-1)
 #   11  gRPC over h2c
 #   12  115-check suite via the epoll EVENT LOOP   (h2c)
 #   13  115-check suite over TLS via the EVENT LOOP  (B4d: handshake driven by
@@ -954,6 +958,125 @@ else
   fi
   kill -TERM "$SRV" 2>/dev/null || true
   wait "$SRV" 2>/dev/null || true
+fi
+
+# ── 10b · TLS 1.2 cipher rules on the wire (TLSCIPHER-1) ─────────────────────
+# Until provider 1.10.0, SSLCipherList was accepted from the shared config
+# record and never applied. Delphi-nghttp2's own gate (stage 4i there) proves
+# the setter makes OpenSSL KEEP the rules; this proves a peer that is not ours
+# sees them - level 4 of "it works". openssl s_client is that peer, judged by
+# EXIT CODE plus its "Cipher is" / "ALPN protocol" lines, never by error text.
+#
+# Order is deliberate, as in stage 10: every refusal check is preceded by a
+# positive check on the same server, so a "refused" cannot come from a server
+# that never started. The control (A) shows the default server ACCEPTS the
+# client that B2 expects to be refused - without it, a client that cannot
+# connect at all would read as enforcement.
+#
+# C and D need no client: the provider must refuse to START. Before the fix
+# both servers came up and ran - `timeout` turns that into a FAIL rather than
+# a hang.
+echo
+echo "── 10b  TLS 1.2 cipher rules on the wire (openssl s_client peer) ───────"
+C_ALLOW=ECDHE-RSA-AES256-GCM-SHA384
+C_DENY=ECDHE-RSA-AES128-GCM-SHA256
+
+s_client_try() {   # <logname> <s_client args...> - 0 = handshake completed
+  local log=$1; shift
+  timeout 10 openssl s_client -connect "127.0.0.1:$TLS_PORT" -servername localhost \
+    "$@" < /dev/null > "$WORK/$log" 2>&1
+}
+start_tls_srv() {  # <logname> <server args...> - sets SRV; 1 = died at startup
+  local log=$1; shift
+  stdbuf -o0 -e0 ./HorseNghttp2TestServer "$@" < /dev/null > "$WORK/$log" 2>&1 &
+  SRV=$!
+  SERVERS+=("$SRV")
+  sleep 0.8
+  kill -0 "$SRV" 2>/dev/null
+}
+stop_tls_srv() {
+  kill -TERM "$SRV" 2>/dev/null || true
+  wait "$SRV" 2>/dev/null || true
+  wait_port_free "$TLS_PORT" 15 || true
+}
+expect_startup_refusal() {   # <label> <logname> <must-contain> <server args...>
+  local label=$1 log=$2 needle=$3; shift 3
+  timeout 15 ./HorseNghttp2TestServer "$@" < /dev/null > "$WORK/$log" 2>&1
+  local rc=$?
+  wait_port_free "$TLS_PORT" 15 || true
+  if [[ $rc -eq 124 ]]; then
+    fail "$label - the server STARTED and ran; the setting was accepted"
+  elif [[ $rc -ne 0 ]] && grep -q 'FATAL' "$WORK/$log" && grep -qF "$needle" "$WORK/$log"; then
+    pass "$label - refused at startup, naming $needle"
+  else
+    fail "$label - exit $rc, or the refusal does not name $needle"
+    tail -3 "$WORK/$log" | sed 's/^/    | /'
+  fi
+}
+
+if ! command -v openssl > /dev/null 2>&1; then
+  skip "openssl absent - SSLCipherList was NOT exercised on the wire"
+elif [[ ! -f tls/cert.pem || ! -f tls/key.pem ]]; then
+  skip "tls/cert.pem or tls/key.pem missing — run: bash gen-tls-cert.sh"
+elif ! wait_port_free "$TLS_PORT" 15; then
+  skip "port $TLS_PORT still bound — clear it with: pkill -f HorseNghttp2TestServer"
+else
+  # A · control: the DEFAULT server accepts the client B2 must be refused.
+  if ! start_tls_srv ciphers-a-server.log tls; then
+    fail "10b control server exited at startup"
+    tail -4 "$WORK/ciphers-a-server.log" | sed 's/^/    | /'
+  else
+    if s_client_try ciphers-a.log -tls1_2 -cipher "$C_DENY" -alpn h2 \
+       && grep -q "Cipher is $C_DENY" "$WORK/ciphers-a.log"; then
+      pass "control: default server negotiates $C_DENY over TLS 1.2"
+    else
+      fail "control: default server did NOT accept a $C_DENY client - B2 below proves nothing"
+    fi
+  fi
+  stop_tls_srv
+
+  # B · restricted server.
+  if ! start_tls_srv ciphers-b-server.log "ciphers12=$C_ALLOW"; then
+    fail "server with ciphers12=$C_ALLOW exited at startup"
+    tail -4 "$WORK/ciphers-b-server.log" | sed 's/^/    | /'
+  else
+    if s_client_try ciphers-b1.log -tls1_2 -cipher "$C_ALLOW" -alpn h2 \
+       && grep -q "Cipher is $C_ALLOW" "$WORK/ciphers-b1.log" \
+       && grep -q "ALPN protocol: h2" "$WORK/ciphers-b1.log"; then
+      pass "configured cipher negotiated over TLS 1.2, ALPN h2"
+    else
+      fail "configured cipher $C_ALLOW was NOT negotiated (see ciphers-b1.log)"
+    fi
+    if s_client_try ciphers-b2.log -tls1_2 -cipher "$C_DENY" -alpn h2; then
+      fail "excluded cipher $C_DENY was ACCEPTED - SSLCipherList not enforced"
+    else
+      pass "excluded cipher $C_DENY refused at the handshake"
+    fi
+    if s_client_try ciphers-b3.log -tls1_3 -alpn h2 \
+       && grep -q "TLSv1.3" "$WORK/ciphers-b3.log"; then
+      pass "TLS 1.3 still negotiates - TLS 1.2 rules left it alone"
+    else
+      fail "TLS 1.3 broken by a TLS 1.2 cipher rule (see ciphers-b3.log)"
+    fi
+    if command -v curl > /dev/null 2>&1; then
+      B4=$(timeout 10 curl -sk --http2 --tlsv1.2 --tls-max 1.2 --ciphers "$C_ALLOW" \
+             -w ' %{http_version}' "https://127.0.0.1:$TLS_PORT/ping" 2>/dev/null)
+      if [[ "$B4" == "pong 2" ]]; then
+        pass "HTTP/2 request over the restricted TLS 1.2 connection: 200 + body"
+      else
+        fail "HTTP/2 over the restricted TLS 1.2 connection: got \"$B4\", want \"pong 2\""
+      fi
+    else
+      skip "curl absent - no HTTP/2 request made over the restricted connection"
+    fi
+  fi
+  stop_tls_srv
+
+  # C / D · configurations the provider must refuse to start with.
+  expect_startup_refusal "invalid SSLCipherList" ciphers-c.log \
+    BOGUSCIPHER ciphers12=BOGUSCIPHER
+  expect_startup_refusal "SSLVerifyPeer without SSLCACertFile" ciphers-d.log \
+    SSLCACertFile verify-no-ca
 fi
 
 # ── 11 · gRPC over h2c ───────────────────────────────────────────────────────

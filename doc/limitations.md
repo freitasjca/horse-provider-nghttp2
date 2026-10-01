@@ -2,7 +2,7 @@
 
 Provider **1.9.3**. The gRPC entries below depend on the *library* version Boss
 resolves, not on the provider: `boss.json` declares a floor of
-`Delphi-nghttp2 >= 1.10.0` and Boss takes the newest satisfying it, so a fresh
+`Delphi-nghttp2 >= 1.22.0` (since provider 1.10.0) and Boss takes the newest satisfying it, so a fresh
 install gets everything marked resolved here. Pinning an older library brings
 the corresponding limitation back — the version that closed each one is named.
 

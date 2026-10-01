@@ -1,6 +1,6 @@
 # horse-provider-nghttp2
 
-**Status: v1.9.5 — production-ready (h2c + TLS + mTLS + gRPC + streaming + WebSocket). Delphi 10.4+, FPC 3.2.2 and trunk 3.3.1** — gRPC needs trunk.
+**Status: v1.10.0 — production-ready (h2c + TLS + mTLS + gRPC + streaming + WebSocket). Delphi 10.4+, FPC 3.2.2 and trunk 3.3.1** — gRPC needs trunk.
 
 HTTP/2-native transport provider for [Horse](https://github.com/HashLoad/horse), built on [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) and the C library [libnghttp2](https://nghttp2.org/). Drop-in replacement for the default Indy transport — activate with one compiler define, keep your existing routes and middleware unchanged.
 
@@ -14,6 +14,7 @@ Companion to [`horse-provider-crosssocket`](https://github.com/freitasjca/horse-
 - **HPACK header compression** — reduces per-request overhead on high-frequency routes
 - **TLS with ALPN** — `h2` over HTTPS; OpenSSL 3.x / 1.1.x auto-detected at runtime, no recompile
 - **mTLS** — client certificate verification for zero-trust service-to-service calls
+- **TLS 1.2 cipher restriction** — `SSLCipherList` (OpenSSL rule syntax), applied since 1.10.0 and verified on the wire; TLS 1.3 suites are configured separately (planned) — see [doc/tls.md](doc/tls.md#cipher-configuration)
 - **gRPC** — unary plus all three streaming shapes (server, client, bidirectional); protobuf codec with repeated fields; two registration styles (`RegisterMethod` / `RegisterService<T>`)
 - **Async worker pool** — handlers run off the connection thread; 18.3× throughput on blocking routes
 - **Streaming & SSE** — `Res.SendStream` for Web Streams (NDJSON) and Server-Sent Events; no chunked framing needed on HTTP/2
@@ -50,7 +51,7 @@ HTTP/1.1 endpoint, use one of Horse's other transports.
 
 - Delphi 10.4 Sydney or later / FPC 3.2.2 or trunk 3.3.1 — **gRPC needs trunk**; build 3.2.2 with `-dHORSE_NGHTTP2_NO_GRPC` (see [doc/fpc-lazarus.md](doc/fpc-lazarus.md))
 - Horse **≥ 3.3.5** — stock, unpatched. Earlier versions are not enough: on 3.3.4 and below, WebSocket and streaming fail *silently* (see [Horse core requirements](#horse-core-requirements))
-- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) **≥ 1.20.0** — this is the floor `boss.json` declares, and it is a *correctness* floor rather than an API one. Below 1.20.0, `PushStreamData` reset the read cursor in the streaming buffer to 0 after every append (CL3b), causing `ReadResponseBodyCallback` to re-read from the start of the buffer on every pump — the buffer grew without bound and the worker deadlocked permanently under slow-client conditions. Any streaming or SSE route is affected; the failure is silent on the server side and surfaces as a hung connection on the client. Boss resolves the newest version satisfying the floor, so there is nothing to bump when the library releases.
+- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) **≥ 1.22.0** — the floor `boss.json` declares. 1.22.0 is an API floor: `SSLCipherList` is applied through `TTlsServerContext.SetTls12CipherRules`, which first shipped there. Underneath it is the older *correctness* floor of 1.20.0: below 1.20.0, `PushStreamData` reset the read cursor in the streaming buffer to 0 after every append (CL3b), causing `ReadResponseBodyCallback` to re-read from the start of the buffer on every pump — the buffer grew without bound and the worker deadlocked permanently under slow-client conditions. Any streaming or SSE route is affected; the failure is silent on the server side and surfaces as a hung connection on the client. Boss resolves the newest version satisfying the floor, so there is nothing to bump when the library releases.
 - libnghttp2 ≥ 1.59 — **required at run time**, dynamic-loaded (`nghttp2.dll` / `libnghttp2.so.14` / `libnghttp2.dylib`); see [getting-nghttp2-windows.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-windows.md) / [getting-nghttp2-linux.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-linux.md)
 - OpenSSL 3.x or 1.1 for TLS only (auto-detected at runtime)
 

@@ -143,9 +143,9 @@ bash build-fpc.sh                  # all 19 stages (18 numbered, plus 4b)
 bash build-fpc.sh --compile-only   # stages 1–4 only
 ```
 
-Stages narrow in scope so a failure names its own cause: socket alone → session + server → both programs → 114-check suite → graceful-shutdown delivery (nghttp witness) → connection-thread leak growth → two-stage GOAWAY frame trace → TLS → mTLS → gRPC → the same suites again via the epoll event loop → streaming timing and producer backpressure → WebSocket upgrade. Requires `h2load` and `nghttp` (`apt install nghttp2-client`); stage 18 additionally needs Python with `h2`.
+Stages narrow in scope so a failure names its own cause: socket alone → session + server → both programs → 114-check suite → graceful-shutdown delivery (nghttp witness) → connection-thread leak growth → two-stage GOAWAY frame trace → TLS → mTLS → TLS 1.2 cipher rules on the wire (`openssl s_client` as the peer, stage 10b) → gRPC → the same suites again via the epoll event loop → streaming timing and producer backpressure → WebSocket upgrade. Requires `h2load` and `nghttp` (`apt install nghttp2-client`); stage 18 additionally needs Python with `h2`.
 
-A full green run reports **27 passed** — more than 18, because several stages assert more than once (mTLS checks positive and negative; stage 6b covers three connection shapes; stage 18 makes four assertions).
+A full green run reports **27 passed** — more than 18, because several stages assert more than once (mTLS checks positive and negative; stage 6b covers three connection shapes; stage 18 makes four assertions). **Stage 10b (1.10.0) adds seven**: a control, four wire checks on a restricted server, and two configurations that must stop the server at startup. **Current green baseline, measured 2026-10-01 on FPC trunk 3.3.1: `Stages: 45 passed, 0 failed, 1 skipped`.** The skip is stage 19's LCL case, which needs the Lazarus `Forms` unit. The 27 above predates several stages and is kept only as history.
 
 Stage 12 is the **only** stage that exercises the epoll engine — and it **fails** (not passes) when the engine is unavailable, because `eventloop` degrades silently and a fallback run would retest the thread driver that stage 5 already covered.
 

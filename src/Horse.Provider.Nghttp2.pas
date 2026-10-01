@@ -653,34 +653,68 @@ begin
 
   // TLS: if the caller set SSLEnabled with a cert + key path, build a
   // TTlsServerContext and hand it to the nghttp2 server via InternalListen.
-  // FTls is freed in StopListen. v1 supports only cert+key; SSLKeyPassword,
-  // SSLCACertFile (CA), and SSLVerifyPeer (mTLS) are v1.1 refinements.
+  // FTls is freed in StopListen. Applied from the shared config record:
+  // SSLCertFile, SSLKeyFile, SSLKeyPassword, SSLCipherList (TLS <= 1.2 rules,
+  // since TLSCIPHER-1), and SSLCACertFile + SSLVerifyPeer (mTLS).
   if AConfig.SSLEnabled then
   begin
     if (AConfig.SSLCertFile = '') or (AConfig.SSLKeyFile = '') then
-      raise EHorseException.Create(
+      // [FIX-NGHTTP2-EXCMSG-1] EHorseException.Create(text) stores the text in
+      // FTitle, NOT in Message - only .Error() sets Message. Every raise below
+      // used Create(text) and so reached the caller with an EMPTY message
+      // ("[FATAL] EHorseException:"). New.Error(...) is Horse's own idiom
+      // (Horse.Core.Param.Field). Found by stage 10b, which requires the
+      // refusal to NAME the field.
+      raise EHorseException.New.Error(
         'HORSE_PROVIDER_NGHTTP2: SSLEnabled requires both SSLCertFile and SSLKeyFile');
+
+    // [FIX-NGHTTP2-VERIFYPEER-1] SSLVerifyPeer without SSLCACertFile used to
+    // start a server that verified NO client certificate - mTLS requested,
+    // plain TLS delivered, nothing said. The CrossSocket provider raises on
+    // this exact configuration of this same shared record, so the two
+    // providers disagreed about whether one config was mTLS. Refuse, as it
+    // does. (SSLCACertFile without SSLVerifyPeer stays allowed: it claims no
+    // verification, so nothing is silently weaker than configured.)
+    if AConfig.SSLVerifyPeer and (AConfig.SSLCACertFile = '') then
+      raise EHorseException.New.Error(
+        'HORSE_PROVIDER_NGHTTP2: SSLVerifyPeer=True requires SSLCACertFile. ' +
+        'Without a CA there is nothing to verify client certificates against, ' +
+        'so the server would run WITHOUT mutual TLS. Set SSLCACertFile, or ' +
+        'set SSLVerifyPeer=False for server-only TLS.');
 
     if FTls = nil then
     begin
       FTls := TTlsServerContext.Create;
-      // Password MUST be set before LoadPrivateKeyFile — the callback fires
-      // synchronously during that load. Empty string = unencrypted key,
-      // callback returns 0 and OpenSSL proceeds without prompting.
-      if AConfig.SSLKeyPassword <> '' then
-        FTls.SetPrivateKeyPassword(AConfig.SSLKeyPassword);
-      FTls.LoadCertificateFile(AConfig.SSLCertFile);
-      FTls.LoadPrivateKeyFile(AConfig.SSLKeyFile);
-      FTls.CheckKeyMatch;
-      FTls.EnableHttp2Alpn;
+      // Any raise below leaves the context PARTLY configured. FTls is a class
+      // var reused by the next Listen (`if FTls = nil`), so keeping it would
+      // let a retry serve from a context missing whatever failed - say, the
+      // cipher restriction. Free it and re-raise.
+      try
+        // Password MUST be set before LoadPrivateKeyFile — the callback fires
+        // synchronously during that load. Empty string = unencrypted key,
+        // callback returns 0 and OpenSSL proceeds without prompting.
+        if AConfig.SSLKeyPassword <> '' then
+          FTls.SetPrivateKeyPassword(AConfig.SSLKeyPassword);
+        FTls.LoadCertificateFile(AConfig.SSLCertFile);
+        FTls.LoadPrivateKeyFile(AConfig.SSLKeyFile);
+        FTls.CheckKeyMatch;
+        FTls.EnableHttp2Alpn;
 
-      // mTLS — if the caller set SSLCACertFile AND SSLVerifyPeer, load the CA
-      // and require every client to present a cert signed by it. Setting only
-      // SSLCACertFile without SSLVerifyPeer is a no-op (would import trust
-      // roots but never actually check the client), and the reverse is
-      // meaningless (verify against WHAT?) — so both must be set together.
-      if AConfig.SSLVerifyPeer and (AConfig.SSLCACertFile <> '') then
-        FTls.EnableClientCertVerification(AConfig.SSLCACertFile);
+        // [TLSCIPHER-1] SSLCipherList was accepted from the shared record and
+        // never applied - a configured restriction that silently did nothing.
+        // It is OpenSSL TLS <= 1.2 rule syntax and never affects TLS 1.3.
+        // Empty = OpenSSL's default (the setter makes no call). Raises
+        // ENghttp2Tls when no TLS 1.2 cipher matches. For h2 over TLS 1.2,
+        // keep at least one cipher RFC 7540 9.2.2 permits (ECDHE + AEAD).
+        FTls.SetTls12CipherRules(AConfig.SSLCipherList);
+
+        // mTLS — both fields set, guaranteed by the check above.
+        if AConfig.SSLVerifyPeer then
+          FTls.EnableClientCertVerification(AConfig.SSLCACertFile);
+      except
+        FreeAndNil(FTls);
+        raise;
+      end;
     end;
   end;
 

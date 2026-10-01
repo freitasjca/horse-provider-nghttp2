@@ -41,6 +41,8 @@ Cfg.SSLVerifyPeer := True;
 
 Clients must present a certificate signed by `ca.pem` or the TLS handshake is rejected before any HTTP/2 data is exchanged.
 
+**Both fields are required.** `SSLVerifyPeer := True` without `SSLCACertFile` makes `Listen` raise. Before 1.10.0 that configuration started a server that verified **no** client certificate: mTLS requested, plain TLS delivered, nothing reported. The CrossSocket provider has always refused it, and it reads the same config record. `SSLCACertFile` on its own is still allowed, because it claims no verification.
+
 Test with a client cert:
 
 ```
@@ -49,6 +51,23 @@ curl --http2 --insecure \
   --key  tls/client-key.pem \
   https://localhost:9443/ping
 ```
+
+## Cipher configuration
+
+```pascal
+Cfg.SSLCipherList := 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384';
+```
+
+`SSLCipherList` restricts **TLS 1.2 and below**, in OpenSSL rule syntax (aliases, `!` exclusions, `@SECLEVEL`). Empty leaves OpenSSL's default.
+
+- **Since 1.10.0. Before that, this field was accepted and ignored.** A restriction set on an older release did nothing, so re-check any deployment that relied on it.
+- **It does not affect TLS 1.3.** OpenSSL configures TLS 1.3 suites through a separate call. With OpenSSL 3.x, most clients negotiate TLS 1.3, so this list only governs clients limited to TLS 1.2. A TLS 1.3 suite setting is planned.
+- An `@SECLEVEL=n` in the rules sets the context-wide security level, and TLS 1.3 handshakes obey it too.
+- Rules that match no TLS 1.2 cipher make `Listen` raise, naming the rules.
+- An unknown name next to a valid one is silently dropped by OpenSSL and **not** detected, because rule strings use aliases and can't be checked name by name. Check what was negotiated: `openssl s_client -connect host:9443 -tls1_2 -alpn h2` prints `Cipher is ...`.
+- **HTTP/2 over TLS 1.2 needs an RFC 7540 §9.2.2-permitted cipher** (ECDHE with an AEAD such as AES-GCM or ChaCha20). A list without one lets the handshake complete, and clients then refuse with `INADEQUATE_SECURITY`.
+
+Verified on the wire by `samples/tests/build-fpc.sh` stage 10b and `run-tests.bat` (`openssl s_client` as the peer): the configured cipher is negotiated, an excluded one is refused, and TLS 1.3 is unaffected.
 
 ## Programmatic client (TLS + mTLS)
 

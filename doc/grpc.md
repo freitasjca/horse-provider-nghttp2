@@ -410,7 +410,7 @@ short one.
 ## Limitations
 
 Scoped to the *library* version Boss resolves — the provider's floor is
-`Delphi-nghttp2 >= 1.10.0` and Boss takes the newest satisfying it. The full
+`Delphi-nghttp2 >= 1.22.0` and Boss takes the newest satisfying it. The full
 list is in [limitations.md](limitations.md).
 
 - **ZigZag and fixed-width scalars are not selectable** — `sint32`/`sint64`

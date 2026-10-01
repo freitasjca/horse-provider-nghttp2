@@ -858,6 +858,8 @@ var
   LWorkers:  Integer;
   LShutAfter:   Integer;
   LShutTimeout: Integer;
+  LCiphers12:   string;
+  LVerifyNoCa:  Boolean;
   LTrigger:     TShutdownTrigger;
   LProbe:       TDriverProbe;
   LPort:     Word;
@@ -889,6 +891,8 @@ begin
     LWorkers     := 0;
     LShutAfter   := 0;      // 0 = never auto-shutdown
     LShutTimeout := 10000;
+    LCiphers12   := '';
+    LVerifyNoCa  := False;
     LTrigger     := nil;
     LProbe       := nil;
     for I := 1 to ParamCount do
@@ -912,6 +916,22 @@ begin
         LShutAfter := StrToIntDef(Copy(ParamStr(I), 16, MaxInt), 0);
       if SameText(Copy(ParamStr(I), 1, 17), 'shutdown-timeout=') then
         LShutTimeout := StrToIntDef(Copy(ParamStr(I), 18, MaxInt), 0);
+      // [TLSCIPHER-1] `ciphers12=<rules>` -> SSLCipherList (TLS <= 1.2,
+      // OpenSSL rule syntax). Implies tls. Stage 10b drives it with
+      // openssl s_client to see what is actually NEGOTIATED.
+      if SameText(Copy(ParamStr(I), 1, 10), 'ciphers12=') then
+      begin
+        LCiphers12 := Copy(ParamStr(I), 11, MaxInt);
+        LUseTls    := True;
+      end;
+      // [FIX-NGHTTP2-VERIFYPEER-1] `verify-no-ca` = SSLVerifyPeer WITHOUT a
+      // CA. The provider must refuse to start; this exists only so a test
+      // can prove it does. Implies tls.
+      if SameText(ParamStr(I), 'verify-no-ca') then
+      begin
+        LVerifyNoCa := True;
+        LUseTls     := True;
+      end;
     end;
 
     if LInline then
@@ -1128,6 +1148,9 @@ begin
         LCfg.SSLCACertFile := LCaPath;
         LCfg.SSLVerifyPeer := True;
       end;
+      LCfg.SSLCipherList := LCiphers12;
+      if LVerifyNoCa then
+        LCfg.SSLVerifyPeer := True;   // deliberately no SSLCACertFile
       THorse.ListenWithConfig(LPort, LCfg);
     end
     else
