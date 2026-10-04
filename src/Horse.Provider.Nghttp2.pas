@@ -655,7 +655,8 @@ begin
   // TTlsServerContext and hand it to the nghttp2 server via InternalListen.
   // FTls is freed in StopListen. Applied from the shared config record:
   // SSLCertFile, SSLKeyFile, SSLKeyPassword, SSLCipherList (TLS <= 1.2 rules,
-  // since TLSCIPHER-1), and SSLCACertFile + SSLVerifyPeer (mTLS).
+  // since TLSCIPHER-1), SSLCipherSuitesTLS13 + SSLMinVersion (1.11.0), and
+  // SSLCACertFile + SSLVerifyPeer (mTLS).
   if AConfig.SSLEnabled then
   begin
     if (AConfig.SSLCertFile = '') or (AConfig.SSLKeyFile = '') then
@@ -707,6 +708,20 @@ begin
         // ENghttp2Tls when no TLS 1.2 cipher matches. For h2 over TLS 1.2,
         // keep at least one cipher RFC 7540 9.2.2 permits (ECDHE + AEAD).
         FTls.SetTls12CipherRules(AConfig.SSLCipherList);
+
+        // [TLSCIPHER-1 phase 2] TLS 1.3 suites: exact, case-sensitive names.
+        // Empty = OpenSSL's default (no call). The library reads the list
+        // back and raises naming any suite OpenSSL silently dropped.
+        FTls.SetTls13CipherSuites(AConfig.SSLCipherSuitesTLS13);
+
+        // [MINVER-1] Minimum protocol version. htvDefault makes no call;
+        // htvTLS13 = TLS 1.3 only. The library reads the minimum back and
+        // raises if it did not take.
+        case AConfig.SSLMinVersion of
+          htvDefault: ;
+          htvTLS12:   FTls.SetMinProtocolVersion(ntmTls12);
+          htvTLS13:   FTls.SetMinProtocolVersion(ntmTls13);
+        end;
 
         // mTLS — both fields set, guaranteed by the check above.
         if AConfig.SSLVerifyPeer then

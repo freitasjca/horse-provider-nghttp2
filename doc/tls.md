@@ -61,13 +61,32 @@ Cfg.SSLCipherList := 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384'
 `SSLCipherList` restricts **TLS 1.2 and below**, in OpenSSL rule syntax (aliases, `!` exclusions, `@SECLEVEL`). Empty leaves OpenSSL's default.
 
 - **Since 1.10.0. Before that, this field was accepted and ignored.** A restriction set on an older release did nothing, so re-check any deployment that relied on it.
-- **It does not affect TLS 1.3.** OpenSSL configures TLS 1.3 suites through a separate call. With OpenSSL 3.x, most clients negotiate TLS 1.3, so this list only governs clients limited to TLS 1.2. A TLS 1.3 suite setting is planned.
+- **It does not affect TLS 1.3.** OpenSSL configures TLS 1.3 suites through a separate call. With OpenSSL 3.x, most clients negotiate TLS 1.3, so this list only governs clients limited to TLS 1.2. Use `SSLCipherSuitesTLS13` (below) for TLS 1.3.
 - An `@SECLEVEL=n` in the rules sets the context-wide security level, and TLS 1.3 handshakes obey it too.
 - Rules that match no TLS 1.2 cipher make `Listen` raise, naming the rules.
 - An unknown name next to a valid one is silently dropped by OpenSSL and **not** detected, because rule strings use aliases and can't be checked name by name. Check what was negotiated: `openssl s_client -connect host:9443 -tls1_2 -alpn h2` prints `Cipher is ...`.
 - **HTTP/2 over TLS 1.2 needs an RFC 7540 §9.2.2-permitted cipher** (ECDHE with an AEAD such as AES-GCM or ChaCha20). A list without one lets the handshake complete, and clients then refuse with `INADEQUATE_SECURITY`.
 
 Verified on the wire by `samples/tests/build-fpc.sh` stage 10b and `run-tests.bat` (`openssl s_client` as the peer): the configured cipher is negotiated, an excluded one is refused, and TLS 1.3 is unaffected.
+
+### TLS 1.3 suites and minimum version (1.11.0)
+
+These two fields come from the shared `THorseCrossSocketConfig` and need a Horse release that carries them (HashLoad/horse #597).
+
+```pascal
+Cfg.SSLCipherSuitesTLS13 := 'TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256';
+Cfg.SSLMinVersion        := htvTLS13;   // TLS 1.3 only
+```
+
+- **`SSLCipherSuitesTLS13`**: exact, case-sensitive suite names, colon-separated, in priority order. Empty leaves OpenSSL's default. OpenSSL silently drops a misspelled name next to a valid one, so the provider reads the effective list back and `Listen` raises, naming every suite that was dropped.
+- **`SSLMinVersion`**: `htvDefault` (no call, OpenSSL's floor), `htvTLS12` (TLS 1.2 or newer; TLS 1.3 still allowed) or `htvTLS13` (TLS 1.3 only). The minimum is read back from the context; if it did not take, `Listen` raises.
+- Neither changes the TLS 1.2 rules, and the minimum does not change the maximum.
+
+Verified on the wire by stage 10c in both harnesses:
+
+- the configured TLS 1.3 suite is negotiated, an excluded one is refused, and TLS 1.2 is untouched;
+- a suite typo stops the server at startup, naming the typo;
+- `minver13` refuses a TLS 1.2 client, while `minver12` still serves TLS 1.3.
 
 ## Programmatic client (TLS + mTLS)
 

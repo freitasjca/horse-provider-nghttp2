@@ -39,6 +39,10 @@
 #       must negotiate the configured cipher, be REFUSED an excluded one,
 #       still get TLS 1.3; bad rules and VerifyPeer-without-CA must stop
 #       the server at startup (FIX-NGHTTP2-VERIFYPEER-1)
+#   10c TLS 1.3 suites + minimum TLS version ON THE WIRE (1.11.0): the
+#       configured TLS 1.3 suite is negotiated, an excluded one refused,
+#       TLS 1.2 untouched; a suite typo stops the server at startup;
+#       minver13 refuses TLS 1.2, minver12 still serves TLS 1.3
 #   11  gRPC over h2c
 #   12  115-check suite via the epoll EVENT LOOP   (h2c)
 #   13  115-check suite over TLS via the EVENT LOOP  (B4d: handshake driven by
@@ -1077,6 +1081,108 @@ else
     BOGUSCIPHER ciphers12=BOGUSCIPHER
   expect_startup_refusal "SSLVerifyPeer without SSLCACertFile" ciphers-d.log \
     SSLCACertFile verify-no-ca
+fi
+
+# ── 10c · TLS 1.3 suites + minimum TLS version on the wire (1.11.0) ──────────
+# SSLCipherSuitesTLS13 and SSLMinVersion arrive with HashLoad/horse #597; the
+# library setters (Delphi-nghttp2 1.22.0 suites, 1.23.0 minimum) read their
+# values back, and stage 4i there proves OpenSSL KEPT them. This is level 4:
+# an openssl s_client peer sees them. Same discipline as 10b - every refusal
+# follows a control that the same client is accepted where it should be
+# (A for the suites; 10b's control A already showed the default server
+# serving TLS 1.2, which M2 must refuse).
+echo
+echo "── 10c  TLS 1.3 suites + minimum TLS version on the wire (openssl s_client) ──"
+S_ALLOW=TLS_CHACHA20_POLY1305_SHA256
+S_DENY=TLS_AES_128_GCM_SHA256
+S_TYPO=TLS_AES_256_GCM_SHA348
+
+if ! command -v openssl > /dev/null 2>&1; then
+  skip "openssl absent - TLS 1.3 suites / minimum version NOT exercised on the wire"
+elif [[ ! -f tls/cert.pem || ! -f tls/key.pem ]]; then
+  skip "tls/cert.pem or tls/key.pem missing — run: bash gen-tls-cert.sh"
+elif ! wait_port_free "$TLS_PORT" 15; then
+  skip "port $TLS_PORT still bound — clear it with: pkill -f HorseNghttp2TestServer"
+else
+  # A · control: the DEFAULT server serves the TLS 1.3 client B2 must be refused.
+  if ! start_tls_srv suites-a-server.log tls; then
+    fail "10c control server exited at startup"
+    tail -4 "$WORK/suites-a-server.log" | sed 's/^/    | /'
+  else
+    if s_client_try suites-a.log -tls1_3 -ciphersuites "$S_DENY" -alpn h2 \
+       && grep -q "Cipher is $S_DENY" "$WORK/suites-a.log"; then
+      pass "control: default server negotiates $S_DENY over TLS 1.3"
+    else
+      fail "control: default server did NOT accept a $S_DENY client - B2 below proves nothing"
+    fi
+  fi
+  stop_tls_srv
+
+  # B · server restricted to one TLS 1.3 suite.
+  if ! start_tls_srv suites-b-server.log "suites13=$S_ALLOW"; then
+    fail "server with suites13=$S_ALLOW exited at startup"
+    tail -4 "$WORK/suites-b-server.log" | sed 's/^/    | /'
+  else
+    if s_client_try suites-b1.log -tls1_3 -ciphersuites "$S_ALLOW" -alpn h2 \
+       && grep -q "Cipher is $S_ALLOW" "$WORK/suites-b1.log" \
+       && grep -q "ALPN protocol: h2" "$WORK/suites-b1.log"; then
+      pass "configured TLS 1.3 suite negotiated, ALPN h2"
+    else
+      fail "configured TLS 1.3 suite $S_ALLOW was NOT negotiated (see suites-b1.log)"
+    fi
+    if s_client_try suites-b2.log -tls1_3 -ciphersuites "$S_DENY" -alpn h2; then
+      fail "excluded TLS 1.3 suite $S_DENY was ACCEPTED - SSLCipherSuitesTLS13 not enforced"
+    else
+      pass "excluded TLS 1.3 suite $S_DENY refused at the handshake"
+    fi
+    if s_client_try suites-b3.log -tls1_2 -alpn h2 \
+       && grep -q "TLSv1.2" "$WORK/suites-b3.log"; then
+      pass "TLS 1.2 still negotiates - the TLS 1.3 setting left it alone"
+    else
+      fail "TLS 1.2 broken by a TLS 1.3 suite setting (see suites-b3.log)"
+    fi
+  fi
+  stop_tls_srv
+
+  # C · a typo beside a valid name: OpenSSL keeps the valid one silently, so
+  # only the read-back can refuse it.
+  expect_startup_refusal "TLS 1.3 suite typo beside a valid name" suites-c.log \
+    "$S_TYPO" "suites13=$S_TYPO:$S_ALLOW"
+
+  # M · minimum version. minver13 must refuse TLS 1.2; minver12 is a FLOOR,
+  # not a pin, so TLS 1.3 must still be served.
+  if ! start_tls_srv minver13-server.log minver13; then
+    fail "server with minver13 exited at startup"
+    tail -4 "$WORK/minver13-server.log" | sed 's/^/    | /'
+  else
+    if s_client_try minver-m1.log -tls1_3 -alpn h2 && grep -q "TLSv1.3" "$WORK/minver-m1.log"; then
+      pass "minver13: a TLS 1.3 client is served"
+    else
+      fail "minver13: TLS 1.3 client NOT served (see minver-m1.log)"
+    fi
+    if s_client_try minver-m2.log -tls1_2 -alpn h2; then
+      fail "minver13: a TLS 1.2 client was ACCEPTED - SSLMinVersion not enforced"
+    else
+      pass "minver13: a TLS 1.2 client is REFUSED"
+    fi
+  fi
+  stop_tls_srv
+  if ! start_tls_srv minver12-server.log minver12; then
+    fail "server with minver12 exited at startup"
+    tail -4 "$WORK/minver12-server.log" | sed 's/^/    | /'
+  else
+    if s_client_try minver-m3.log -tls1_2 -alpn h2 && grep -q "TLSv1.2" "$WORK/minver-m3.log"; then
+      pass "minver12: a TLS 1.2 client is served"
+    else
+      fail "minver12: TLS 1.2 client NOT served (see minver-m3.log)"
+    fi
+    if s_client_try minver-m4.log -tls1_3 -alpn h2 && grep -q "TLSv1.3" "$WORK/minver-m4.log"; then
+      pass "minver12 is a MINIMUM: TLS 1.3 is still served"
+    else
+      fail "minver12 pinned the version - TLS 1.3 NOT served (see minver-m4.log)"
+    fi
+  fi
+  stop_tls_srv
 fi
 
 # ── 11 · gRPC over h2c ───────────────────────────────────────────────────────

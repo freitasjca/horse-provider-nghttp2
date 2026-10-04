@@ -181,6 +181,10 @@ REM Same order: a control first, then each refusal preceded by a positive on
 REM the same server. The two startup cases need no openssl at all.
 call :run_ciphers
 
+REM -- 10c. TLS 1.3 suites + minimum TLS version on the wire (1.11.0) ----------
+REM Same peer and order as 10b; see :run_suites13 below.
+call :run_suites13
+
 REM -- 11. gRPC over h2c -------------------------------------------------------
 call :run_grpc
 
@@ -368,6 +372,111 @@ call :stop_server
 REM C / D - configurations the provider must refuse to start with.
 call :expect_refusal "invalid SSLCipherList" ciphers-c BOGUSCIPHER "ciphers12=BOGUSCIPHER"
 call :expect_refusal "SSLVerifyPeer without SSLCACertFile" ciphers-d SSLCACertFile "verify-no-ca"
+exit /b 0
+
+REM Stage 10c. SSLCipherSuitesTLS13 + SSLMinVersion (HashLoad/horse #597,
+REM provider 1.11.0). Same judging as 10b: exit code plus the "Cipher is" /
+REM "TLSv1.x" lines. A is the control for B2; 10b's control A already showed
+REM the default server serving TLS 1.2, which M2 must refuse.
+:run_suites13
+echo.
+echo -- TLS 1.3 suites + minimum TLS version on the wire (openssl s_client peer)
+set "S_ALLOW=TLS_CHACHA20_POLY1305_SHA256"
+set "S_DENY=TLS_AES_128_GCM_SHA256"
+set "S_TYPO=TLS_AES_256_GCM_SHA348"
+if not defined OPENSSL (
+    call :skip "TLS 1.3 suites / minimum version - openssl.exe not on PATH; NOT exercised"
+    exit /b 0
+)
+
+REM A - control: the DEFAULT server serves the TLS 1.3 client B2 must be refused.
+start "" /B cmd /c "HorseNghttp2TestServer.exe tls < nul > %LOGDIR%\suites-a-server.log 2>&1"
+call :wait_bind
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_3 -ciphersuites !S_DENY! -alpn h2 < nul > "%LOGDIR%\suites-a.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :s13_a_fail
+findstr /L /C:"Cipher is !S_DENY!" "%LOGDIR%\suites-a.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :s13_a_fail
+call :pass "control: default server negotiates !S_DENY! over TLS 1.3"
+goto :s13_a_done
+:s13_a_fail
+call :fail "control: default server did NOT accept a !S_DENY! client - B2 proves nothing"
+:s13_a_done
+call :stop_server
+
+REM B - server restricted to S_ALLOW.
+start "" /B cmd /c "HorseNghttp2TestServer.exe suites13=!S_ALLOW! < nul > %LOGDIR%\suites-b-server.log 2>&1"
+call :wait_bind
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_3 -ciphersuites !S_ALLOW! -alpn h2 < nul > "%LOGDIR%\suites-b1.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :s13_b1_fail
+findstr /L /C:"Cipher is !S_ALLOW!" "%LOGDIR%\suites-b1.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :s13_b1_fail
+findstr /L /C:"ALPN protocol: h2" "%LOGDIR%\suites-b1.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :s13_b1_fail
+call :pass "configured TLS 1.3 suite negotiated, ALPN h2"
+goto :s13_b1_done
+:s13_b1_fail
+call :fail "configured TLS 1.3 suite !S_ALLOW! was NOT negotiated - see %LOGDIR%\suites-b1.log"
+:s13_b1_done
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_3 -ciphersuites !S_DENY! -alpn h2 < nul > "%LOGDIR%\suites-b2.log" 2>&1
+if !ERRORLEVEL! EQU 0 (
+    call :fail "excluded TLS 1.3 suite !S_DENY! was ACCEPTED - SSLCipherSuitesTLS13 not enforced"
+) else (
+    call :pass "excluded TLS 1.3 suite !S_DENY! refused at the handshake"
+)
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_2 -alpn h2 < nul > "%LOGDIR%\suites-b3.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :s13_b3_fail
+findstr /L /C:"TLSv1.2" "%LOGDIR%\suites-b3.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :s13_b3_fail
+call :pass "TLS 1.2 still negotiates - the TLS 1.3 setting left it alone"
+goto :s13_b3_done
+:s13_b3_fail
+call :fail "TLS 1.2 broken by a TLS 1.3 suite setting - see %LOGDIR%\suites-b3.log"
+:s13_b3_done
+call :stop_server
+
+REM C - a typo beside a valid name: only the read-back can refuse it.
+call :expect_refusal "TLS 1.3 suite typo beside a valid name" suites-c !S_TYPO! "suites13=!S_TYPO!:!S_ALLOW!"
+
+REM M - minimum version. minver13 refuses TLS 1.2; minver12 is a floor, not a pin.
+start "" /B cmd /c "HorseNghttp2TestServer.exe minver13 < nul > %LOGDIR%\minver13-server.log 2>&1"
+call :wait_bind
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_3 -alpn h2 < nul > "%LOGDIR%\minver-m1.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :mv_m1_fail
+findstr /L /C:"TLSv1.3" "%LOGDIR%\minver-m1.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :mv_m1_fail
+call :pass "minver13: a TLS 1.3 client is served"
+goto :mv_m1_done
+:mv_m1_fail
+call :fail "minver13: TLS 1.3 client NOT served - see %LOGDIR%\minver-m1.log"
+:mv_m1_done
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_2 -alpn h2 < nul > "%LOGDIR%\minver-m2.log" 2>&1
+if !ERRORLEVEL! EQU 0 (
+    call :fail "minver13: a TLS 1.2 client was ACCEPTED - SSLMinVersion not enforced"
+) else (
+    call :pass "minver13: a TLS 1.2 client is REFUSED"
+)
+call :stop_server
+start "" /B cmd /c "HorseNghttp2TestServer.exe minver12 < nul > %LOGDIR%\minver12-server.log 2>&1"
+call :wait_bind
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_2 -alpn h2 < nul > "%LOGDIR%\minver-m3.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :mv_m3_fail
+findstr /L /C:"TLSv1.2" "%LOGDIR%\minver-m3.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :mv_m3_fail
+call :pass "minver12: a TLS 1.2 client is served"
+goto :mv_m3_done
+:mv_m3_fail
+call :fail "minver12: TLS 1.2 client NOT served - see %LOGDIR%\minver-m3.log"
+:mv_m3_done
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_3 -alpn h2 < nul > "%LOGDIR%\minver-m4.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :mv_m4_fail
+findstr /L /C:"TLSv1.3" "%LOGDIR%\minver-m4.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :mv_m4_fail
+call :pass "minver12 is a MINIMUM: TLS 1.3 is still served"
+goto :mv_m4_done
+:mv_m4_fail
+call :fail "minver12 pinned the version - TLS 1.3 NOT served - see %LOGDIR%\minver-m4.log"
+:mv_m4_done
+call :stop_server
 exit /b 0
 
 REM expect_refusal <label> <logname> <must-contain> <server-args>

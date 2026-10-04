@@ -859,6 +859,8 @@ var
   LShutAfter:   Integer;
   LShutTimeout: Integer;
   LCiphers12:   string;
+  LSuites13:    string;
+  LMinVer:      THorseTlsMinVersion;
   LVerifyNoCa:  Boolean;
   LTrigger:     TShutdownTrigger;
   LProbe:       TDriverProbe;
@@ -892,6 +894,8 @@ begin
     LShutAfter   := 0;      // 0 = never auto-shutdown
     LShutTimeout := 10000;
     LCiphers12   := '';
+    LSuites13    := '';
+    LMinVer      := htvDefault;
     LVerifyNoCa  := False;
     LTrigger     := nil;
     LProbe       := nil;
@@ -923,6 +927,24 @@ begin
       begin
         LCiphers12 := Copy(ParamStr(I), 11, MaxInt);
         LUseTls    := True;
+      end;
+      // [TLSCIPHER-1 phase 2] `suites13=<names>` -> SSLCipherSuitesTLS13.
+      // [MINVER-1] `minver12` / `minver13` -> SSLMinVersion. All imply tls.
+      // Stage 10c drives them with openssl s_client.
+      if SameText(Copy(ParamStr(I), 1, 9), 'suites13=') then
+      begin
+        LSuites13 := Copy(ParamStr(I), 10, MaxInt);
+        LUseTls   := True;
+      end;
+      if SameText(ParamStr(I), 'minver12') then
+      begin
+        LMinVer := htvTLS12;
+        LUseTls := True;
+      end;
+      if SameText(ParamStr(I), 'minver13') then
+      begin
+        LMinVer := htvTLS13;
+        LUseTls := True;
       end;
       // [FIX-NGHTTP2-VERIFYPEER-1] `verify-no-ca` = SSLVerifyPeer WITHOUT a
       // CA. The provider must refuse to start; this exists only so a test
@@ -1149,6 +1171,8 @@ begin
         LCfg.SSLVerifyPeer := True;
       end;
       LCfg.SSLCipherList := LCiphers12;
+      LCfg.SSLCipherSuitesTLS13 := LSuites13;
+      LCfg.SSLMinVersion := LMinVer;
       if LVerifyNoCa then
         LCfg.SSLVerifyPeer := True;   // deliberately no SSLCACertFile
       THorse.ListenWithConfig(LPort, LCfg);
