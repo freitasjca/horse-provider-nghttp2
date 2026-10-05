@@ -65,7 +65,7 @@ Cfg.SSLCipherList := 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384'
 - An `@SECLEVEL=n` in the rules sets the context-wide security level, and TLS 1.3 handshakes obey it too.
 - Rules that match no TLS 1.2 cipher make `Listen` raise, naming the rules.
 - An unknown name next to a valid one is silently dropped by OpenSSL and **not** detected, because rule strings use aliases and can't be checked name by name. Check what was negotiated: `openssl s_client -connect host:9443 -tls1_2 -alpn h2` prints `Cipher is ...`.
-- **HTTP/2 over TLS 1.2 needs an RFC 7540 §9.2.2-permitted cipher** (ECDHE with an AEAD such as AES-GCM or ChaCha20). A list without one lets the handshake complete, and clients then refuse with `INADEQUATE_SECURITY`.
+- **For HTTP/2 over TLS 1.2, keep an RFC 7540 §9.2.2-permitted cipher** (ECDHE with an AEAD such as AES-GCM or ChaCha20). The server does **not** refuse a cipher on the RFC's Appendix A black list: measured, a server restricted to `AES128-SHA256` completes the handshake and serves HTTP/2, and `curl --http2` gets `200`. The RFC only says an endpoint *MAY* refuse such a connection with `INADEQUATE_SECURITY`; some clients do (browsers are documented to), curl did not. So such a list works for some clients and fails for others — keep a permitted cipher. Measured by `samples/tests/build-fpc.sh` stage 10d, which only reports and never fails the run.
 
 Verified on the wire by `samples/tests/build-fpc.sh` stage 10b and `run-tests.bat` (`openssl s_client` as the peer): the configured cipher is negotiated, an excluded one is refused, and TLS 1.3 is unaffected.
 
