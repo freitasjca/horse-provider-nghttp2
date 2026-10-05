@@ -185,6 +185,10 @@ REM -- 10c. TLS 1.3 suites + minimum TLS version on the wire (1.11.0) ----------
 REM Same peer and order as 10b; see :run_suites13 below.
 call :run_suites13
 
+REM -- 10d. HTTP/2 needs an RFC 7540-permitted TLS 1.2 cipher (H2CIPHER-1) ----
+REM See :run_h2cipher below and build-fpc.sh stage 10d.
+call :run_h2cipher
+
 REM -- 11. gRPC over h2c -------------------------------------------------------
 call :run_grpc
 
@@ -484,6 +488,58 @@ call :stop_server
 exit /b 0
 
 REM expect_refusal <label> <logname> <must-contain> <server-args>
+REM Stage 10d (H2CIPHER-1, provider 1.11.0). A TLS 1.2 list with no cipher
+REM RFC 7540 permits for HTTP/2 (Appendix A) used to start and SERVE h2 -
+REM measured 2026-10-05: curl accepted, browsers refuse - so the provider now
+REM refuses it at Listen. D2 is the control for D1 (one permitted cipher is
+REM enough); D3: with a TLS 1.3 minimum the TLS 1.2 list is moot, no refusal.
+:run_h2cipher
+echo.
+echo -- HTTP/2 needs an RFC 7540-permitted TLS 1.2 cipher (H2CIPHER-1)
+set "H2_BAD=AES128-SHA256"
+set "H2_GOOD=ECDHE-RSA-AES128-GCM-SHA256"
+
+REM D1 - a blocked-only TLS 1.2 list must stop the server (no openssl needed).
+call :expect_refusal "TLS 1.2 list with no RFC 7540-permitted cipher" h2cipher-d1 "RFC 7540" "ciphers12=!H2_BAD!"
+
+if not defined OPENSSL (
+    call :skip "H2CIPHER-1 controls D2/D3 - openssl.exe not on PATH; NOT exercised"
+    exit /b 0
+)
+
+REM D2 - control: one permitted cipher beside the blocked one is enough.
+start "" /B cmd /c "HorseNghttp2TestServer.exe ciphers12=!H2_BAD!:!H2_GOOD! < nul > %LOGDIR%\h2cipher-d2-server.log 2>&1"
+call :wait_bind
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_2 -cipher !H2_GOOD! -alpn h2 < nul > "%LOGDIR%\h2cipher-d2.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :h2c_d2_fail
+findstr /L /C:"Cipher is !H2_GOOD!" "%LOGDIR%\h2cipher-d2.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :h2c_d2_fail
+findstr /L /C:"ALPN protocol: h2" "%LOGDIR%\h2cipher-d2.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :h2c_d2_fail
+call :pass "control: a list keeping one permitted cipher starts and negotiates !H2_GOOD! with ALPN h2"
+goto :h2c_d2_done
+:h2c_d2_fail
+call :fail "control: !H2_GOOD! with ALPN h2 not negotiated - D1 proves nothing; see %LOGDIR%\h2cipher-d2.log"
+:h2c_d2_done
+call :stop_server
+
+REM D3 - TLS 1.3 minimum: the blocked-only TLS 1.2 list must not stop the server.
+start "" /B cmd /c "HorseNghttp2TestServer.exe ciphers12=!H2_BAD! minver13 < nul > %LOGDIR%\h2cipher-d3-server.log 2>&1"
+call :wait_bind
+"!OPENSSL!" s_client -connect 127.0.0.1:%TLS_PORT% -servername localhost -tls1_3 -alpn h2 < nul > "%LOGDIR%\h2cipher-d3.log" 2>&1
+if !ERRORLEVEL! NEQ 0 goto :h2c_d3_fail
+findstr /L /C:"TLSv1.3" "%LOGDIR%\h2cipher-d3.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :h2c_d3_fail
+findstr /L /C:"ALPN protocol: h2" "%LOGDIR%\h2cipher-d3.log" >nul 2>&1
+if !ERRORLEVEL! NEQ 0 goto :h2c_d3_fail
+call :pass "minver13: a blocked-only TLS 1.2 list does not stop the server; TLS 1.3 + h2 served"
+goto :h2c_d3_done
+:h2c_d3_fail
+call :fail "minver13 + blocked-only TLS 1.2 list: TLS 1.3 with ALPN h2 not served - see %LOGDIR%\h2cipher-d3.log"
+:h2c_d3_done
+call :stop_server
+exit /b 0
+
 :expect_refusal
 start "" /B cmd /c "HorseNghttp2TestServer.exe %~4 < nul > %LOGDIR%\%~2.log 2>&1"
 call :wait_bind

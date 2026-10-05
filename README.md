@@ -14,7 +14,7 @@ Companion to [`horse-provider-crosssocket`](https://github.com/freitasjca/horse-
 - **HPACK header compression** — reduces per-request overhead on high-frequency routes
 - **TLS with ALPN** — `h2` over HTTPS; OpenSSL 3.x / 1.1.x auto-detected at runtime, no recompile
 - **mTLS** — client certificate verification for zero-trust service-to-service calls
-- **TLS 1.2 cipher restriction** — `SSLCipherList` (OpenSSL rule syntax), applied since 1.10.0 and verified on the wire; **TLS 1.3 suites** (`SSLCipherSuitesTLS13`) and a **minimum TLS version** (`SSLMinVersion`, e.g. TLS 1.3 only) since 1.11.0, both read back and verified on the wire — see [doc/tls.md](doc/tls.md#cipher-configuration)
+- **TLS 1.2 cipher restriction** — `SSLCipherList` (OpenSSL rule syntax), applied since 1.10.0 and verified on the wire; **TLS 1.3 suites** (`SSLCipherSuitesTLS13`) and a **minimum TLS version** (`SSLMinVersion`, e.g. TLS 1.3 only) since 1.11.0, both read back and verified on the wire; and since 1.11.0 `Listen` **refuses** a TLS 1.2 list that leaves no cipher HTTP/2 permits (RFC 7540) — see [doc/tls.md](doc/tls.md#cipher-configuration)
 - **gRPC** — unary plus all three streaming shapes (server, client, bidirectional); protobuf codec with repeated fields; two registration styles (`RegisterMethod` / `RegisterService<T>`)
 - **Async worker pool** — handlers run off the connection thread; 18.3× throughput on blocking routes
 - **Streaming & SSE** — `Res.SendStream` for Web Streams (NDJSON) and Server-Sent Events; no chunked framing needed on HTTP/2

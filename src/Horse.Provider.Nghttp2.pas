@@ -705,8 +705,8 @@ begin
         // never applied - a configured restriction that silently did nothing.
         // It is OpenSSL TLS <= 1.2 rule syntax and never affects TLS 1.3.
         // Empty = OpenSSL's default (the setter makes no call). Raises
-        // ENghttp2Tls when no TLS 1.2 cipher matches. For h2 over TLS 1.2,
-        // keep at least one cipher RFC 7540 9.2.2 permits (ECDHE + AEAD).
+        // ENghttp2Tls when no TLS 1.2 cipher matches. A list with no cipher
+        // RFC 7540 permits for h2 is refused below (H2CIPHER-1).
         FTls.SetTls12CipherRules(AConfig.SSLCipherList);
 
         // [TLSCIPHER-1 phase 2] TLS 1.3 suites: exact, case-sensitive names.
@@ -722,6 +722,15 @@ begin
           htvTLS12:   FTls.SetMinProtocolVersion(ntmTls12);
           htvTLS13:   FTls.SetMinProtocolVersion(ntmTls13);
         end;
+
+        // [H2CIPHER-1] HTTP/2 over TLS 1.2 needs a cipher RFC 7540 permits.
+        // Measured (stage 10d): a list of only Appendix A ciphers was SERVED
+        // over h2 - curl accepted, browsers refuse with INADEQUATE_SECURITY -
+        // so the misconfiguration surfaced per client, never at startup. Only
+        // a user-set SSLCipherList can get here (OpenSSL's default holds ECDHE
+        // AEAD ciphers), and a TLS 1.3 minimum makes the TLS 1.2 list moot.
+        if (AConfig.SSLCipherList <> '') and (AConfig.SSLMinVersion <> htvTLS13) then
+          FTls.RequireHttp2Tls12Cipher;
 
         // mTLS — both fields set, guaranteed by the check above.
         if AConfig.SSLVerifyPeer then

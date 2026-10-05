@@ -43,8 +43,9 @@
 #       configured TLS 1.3 suite is negotiated, an excluded one refused,
 #       TLS 1.2 untouched; a suite typo stops the server at startup;
 #       minver13 refuses TLS 1.2, minver12 still serves TLS 1.3
-#   10d MEASURE ONLY (never gates): does the server serve HTTP/2 over a TLS 1.2
-#       cipher RFC 7540 blacklists (AES128-SHA256)? s_client + curl, INFO lines
+#   10d H2CIPHER-1 (1.11.0): a TLS 1.2 list with no RFC 7540-permitted cipher
+#       stops the server at startup; a list keeping one still serves h2;
+#       a TLS 1.3 minimum skips the check
 #   11  gRPC over h2c
 #   12  115-check suite via the epoll EVENT LOOP   (h2c)
 #   13  115-check suite over TLS via the EVENT LOOP  (B4d: handshake driven by
@@ -1187,57 +1188,69 @@ else
   stop_tls_srv
 fi
 
-# ── 10d · HTTP/2 over a TLS 1.2 cipher RFC 7540 blacklists (MEASURE ONLY) ─────
-# H2-CIPHER, from the 2026-10-01 review triage. RFC 7540 §9.2.2: HTTP/2 over
-# TLS 1.2 SHOULD NOT use a cipher in its Appendix A black list, and an endpoint
-# MAY answer one with a connection error INADEQUATE_SECURITY. Delphi-nghttp2
-# does not check, and libnghttp2 itself leaves that to the application (nghttpx
-# checks; the library does not). So nobody knew what this server DOES when its
-# own SSLCipherList leaves only a blacklisted cipher.
+# ── 10d · HTTP/2 needs an RFC 7540-permitted TLS 1.2 cipher (H2CIPHER-1, 1.11.0) ──
+# RFC 7540 §9.2.2: HTTP/2 over TLS 1.2 SHOULD NOT use a cipher on the
+# Appendix A block list, and an endpoint MAY refuse one with
+# INADEQUATE_SECURITY. Neither OpenSSL nor libnghttp2 checks.
 #
-# This stage only RECORDS that - INFO lines, never PASS/FAIL/SKIP, so it cannot
-# move the stage counts. Serving h2 over such a cipher is a policy choice the
-# RFC permits, not a spec violation; the measurement decides whether to enforce.
-# AES128-SHA256 = TLS_RSA_WITH_AES_128_CBC_SHA256: RSA key exchange, CBC - in
-# Appendix A, and still enabled at OpenSSL's default security level 2.
+# MEASURED FIRST (2026-10-05, twice, WSL, OpenSSL 3.0.2, as a report-only
+# stage): a server restricted to AES128-SHA256 SERVED HTTP/2 - curl --http2
+# got http_version=2 and 200. Browsers refuse that connection, curl does not,
+# so the misconfiguration only ever surfaced per client. Since 1.11.0 the
+# provider refuses such a list at Listen (Delphi-nghttp2 1.26.0,
+# RequireHttp2Tls12Cipher, the RFC 7540 Appendix A table ported from nghttpx).
 #
-# FIRST MEASUREMENT 2026-10-05 (twice, WSL, OpenSSL 3.0.2): the server SERVES
-# HTTP/2 over it - curl --http2 got http_version=2 and 200 "pong". `grep -a`:
-# after the handshake the server's binary SETTINGS frame lands in s_client's
-# log, and plain grep then treats the file as binary and prints nothing.
+# D1 is the refusal. D2 is its control: a list that keeps ONE permitted cipher
+# must still start and serve h2, or D1 could pass against a server that
+# refuses every custom list. D3: with a TLS 1.3 minimum the TLS 1.2 list is
+# never used, so the same blocked-only list must NOT stop the server.
+# AES128-SHA256 = TLS_RSA_WITH_AES_128_CBC_SHA256: RSA key exchange + CBC, on
+# the block list, and still enabled at OpenSSL's default security level 2.
+# `grep -a` wherever an s_client log follows `-alpn h2`: the server's binary
+# SETTINGS frame lands in it, and plain grep then prints only "binary file
+# matches".
 echo
-echo "── 10d  HTTP/2 over a blacklisted TLS 1.2 cipher (MEASURE ONLY - never gates) ──"
+echo "── 10d  HTTP/2 needs an RFC 7540-permitted TLS 1.2 cipher (H2CIPHER-1) ──"
 H2_BAD=AES128-SHA256
+H2_GOOD=ECDHE-RSA-AES128-GCM-SHA256
 if ! command -v openssl > /dev/null 2>&1; then
-  echo "  INFO  openssl absent - not measured"
+  skip "openssl absent - H2CIPHER-1 was NOT exercised"
 elif [[ ! -f tls/cert.pem || ! -f tls/key.pem ]]; then
-  echo "  INFO  tls/cert.pem or tls/key.pem missing - not measured"
+  skip "tls/cert.pem or tls/key.pem missing — run: bash gen-tls-cert.sh"
 elif ! wait_port_free "$TLS_PORT" 15; then
-  echo "  INFO  port $TLS_PORT still bound - not measured"
+  skip "port $TLS_PORT still bound — clear it with: pkill -f HorseNghttp2TestServer"
 else
-  if ! start_tls_srv h2cipher-server.log "ciphers12=$H2_BAD"; then
-    echo "  INFO  server with ciphers12=$H2_BAD exited at startup - it REFUSES the setting:"
-    tail -3 "$WORK/h2cipher-server.log" | sed 's/^/    | /'
+  # D1 · a TLS 1.2 list of only blocked ciphers must stop the server.
+  expect_startup_refusal "TLS 1.2 list with no RFC 7540-permitted cipher" \
+    h2cipher-d1.log "RFC 7540" "ciphers12=$H2_BAD"
+
+  # D2 · control: one permitted cipher beside the blocked one is enough.
+  if ! start_tls_srv h2cipher-d2-server.log "ciphers12=$H2_BAD:$H2_GOOD"; then
+    fail "control: a list keeping $H2_GOOD was refused at startup - D1 proves nothing"
+    tail -3 "$WORK/h2cipher-d2-server.log" | sed 's/^/    | /'
   else
-    s_client_try h2cipher-s.log -tls1_2 -cipher "$H2_BAD" -alpn h2
-    H2C_RC=$?
-    H2C_CIPHER=$(grep -a -o "Cipher is [^ ]*" "$WORK/h2cipher-s.log" | head -1)
-    H2C_ALPN=$(grep -a -o "ALPN protocol: [^ ]*\|No ALPN negotiated" "$WORK/h2cipher-s.log" | head -1)
-    echo "  INFO  s_client -tls1_2 -cipher $H2_BAD -alpn h2: exit=$H2C_RC, ${H2C_CIPHER:-no cipher line}, ${H2C_ALPN:-no ALPN line}"
-    if command -v curl > /dev/null 2>&1; then
-      H2C_OUT=$(timeout 10 curl -skS --http2 --tlsv1.2 --tls-max 1.2 --ciphers "$H2_BAD" \
-                  -w ' [http_version=%{http_version} code=%{http_code}]' \
-                  "https://127.0.0.1:$TLS_PORT/ping" 2> "$WORK/h2cipher-curl.err")
-      H2C_CRC=$?
-      echo "  INFO  curl --http2 over $H2_BAD: exit=$H2C_CRC, output: ${H2C_OUT:-<none>}"
-      if [[ -s "$WORK/h2cipher-curl.err" ]]; then
-        head -2 "$WORK/h2cipher-curl.err" | sed 's/^/    | curl: /'
-      fi
+    if s_client_try h2cipher-d2.log -tls1_2 -cipher "$H2_GOOD" -alpn h2 \
+       && grep -a -q "Cipher is $H2_GOOD" "$WORK/h2cipher-d2.log" \
+       && grep -a -q "ALPN protocol: h2" "$WORK/h2cipher-d2.log"; then
+      pass "control: a list keeping one permitted cipher starts and negotiates $H2_GOOD with ALPN h2"
     else
-      echo "  INFO  curl absent - no HTTP/2 request attempted"
+      fail "control: $H2_GOOD with ALPN h2 not negotiated (see h2cipher-d2.log)"
     fi
-    echo "  INFO  reading: exit=0 + 'ALPN protocol: h2' + http_version=2 means the server SERVES"
-    echo "        HTTP/2 over a blacklisted cipher (permitted by RFC 7540 9.2.2, which only says MAY refuse)."
+  fi
+  stop_tls_srv
+
+  # D3 · TLS 1.3 minimum: the TLS 1.2 list is moot, so no refusal.
+  if ! start_tls_srv h2cipher-d3-server.log "ciphers12=$H2_BAD" minver13; then
+    fail "minver13 + a blocked-only TLS 1.2 list was refused at startup - the check must skip a TLS 1.3 minimum"
+    tail -3 "$WORK/h2cipher-d3-server.log" | sed 's/^/    | /'
+  else
+    if s_client_try h2cipher-d3.log -tls1_3 -alpn h2 \
+       && grep -a -q "TLSv1.3" "$WORK/h2cipher-d3.log" \
+       && grep -a -q "ALPN protocol: h2" "$WORK/h2cipher-d3.log"; then
+      pass "minver13: a blocked-only TLS 1.2 list does not stop the server; TLS 1.3 + h2 served"
+    else
+      fail "minver13 + blocked-only TLS 1.2 list: TLS 1.3 with ALPN h2 not served (see h2cipher-d3.log)"
+    fi
   fi
   stop_tls_srv
 fi
