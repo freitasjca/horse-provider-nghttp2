@@ -299,6 +299,10 @@ HorseNghttp2GrpcTestClient.exe < nul > "%LOGDIR%\grpc-client.log" 2>&1
 if !ERRORLEVEL! EQU 0 ( call :pass "gRPC suite (h2c)" ) else ( call :fail "gRPC suite (h2c)" )
 findstr /C:"passed," "%LOGDIR%\grpc-client.log" 2>nul
 taskkill /F /IM HorseNghttp2GrpcDemo.exe >nul 2>&1
+REM GRPC-ERRMSG-1: client test 07 proves the class name no longer reaches the
+REM CLIENT; this proves it still reaches the SERVER log via OnHandlerError.
+findstr /L /C:"[grpc-error] /greeter.Greeter/Fail EArgumentException: 100%% invalid" "%LOGDIR%\grpc-server.log" >nul 2>&1
+if !ERRORLEVEL! EQU 0 ( call :pass "gRPC handler error: class name logged server-side - OnHandlerError" ) else ( call :fail "gRPC handler error: OnHandlerError did not log the class name" )
 exit /b 0
 
 REM Stage 10b. SSLCipherList was accepted and NEVER APPLIED until provider

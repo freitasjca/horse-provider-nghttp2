@@ -1256,6 +1256,16 @@ else
         echo "    if this compiled but failed at run time, check: apt install libffi8"
       fi
       grep -E "passed, .* failed" "$WORK/grpc-client.log" | tail -1 | sed 's/^/    /'
+      # GRPC-ERRMSG-1: the client's test 07 proves the class name no longer
+      # reaches the CLIENT; this proves it still reaches the SERVER, through
+      # TGrpcDispatcher.OnHandlerError. Without it, removing the class name
+      # from the wire could silently remove it from everywhere.
+      if grep -qF "[grpc-error] /greeter.Greeter/Fail EArgumentException: 100% invalid" "$WORK/grpc-server.log"; then
+        pass "gRPC handler error: class name logged server-side (OnHandlerError)"
+      else
+        fail "gRPC handler error: OnHandlerError did not log the class name"
+        tail -4 "$WORK/grpc-server.log" | sed 's/^/    | /'
+      fi
     fi
     kill -TERM "$SRV" 2>/dev/null || true
     wait "$SRV" 2>/dev/null || true

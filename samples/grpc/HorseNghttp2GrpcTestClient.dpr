@@ -14,6 +14,8 @@ program HorseNghttp2GrpcTestClient;
 //   04  ListGreetings server-stream     — N frames on one stream, in order, then grpc-status
 //   05  JoinNames client-stream         — N messages in one body, server reassembles
 //   06  ChatGreetings bidirectional     — N in / N out, each echoing its own request
+//   07  Handler raises (GRPC-ERRMSG-1)  — grpc-status 13, grpc-message = the
+//                                         percent-encoded message, NO class name
 //
 //  Trailer verification: nghttp2 delivers trailer HEADERS through the same
 //  on-header callback as initial headers, so TNghttp2Response.Headers ends
@@ -525,6 +527,48 @@ begin
         Format('grpc-status trailer = 12 (got "%s")', [LStat]));
 end;
 
+// ── 07  Handler raises (GRPC-ERRMSG-1) ─────────────────────────────────
+//
+// /greeter.Greeter/Fail raises EArgumentException('100% invalid "name"') on the
+// demo server. Before GRPC-ERRMSG-1 the client received the server's internal
+// type name in front of the message, and a raw '%' that a spec-compliant client
+// percent-DECODES into something else. Now: the message alone, percent-encoded
+// as the gRPC spec requires. Compared byte for byte against the raw trailer, so
+// a decoding client cannot mask a wrong encoding. The demo's server-side hook
+// must still log the class name; the harness checks that in the server log,
+// because this client cannot see it.
+
+procedure TestHandlerError(const AClient: TNghttp2Client);
+const
+  EXPECTED_MESSAGE = '100%25 invalid "name"';
+var
+  LReq:  TGreetRequest;
+  LRs:   TNghttp2Response;
+  LStat: string;
+  LMsg:  string;
+begin
+  WriteLn;
+  WriteLn('── 07  Handler raises  (expect grpc-status 13, message only, percent-encoded)');
+  LReq := TGreetRequest.Create;
+  try
+    LReq.name := 'ignored';
+    LRs := GrpcSubmit(AClient, '/greeter.Greeter/Fail', LReq);
+  finally
+    LReq.Free;
+  end;
+
+  Check(LRs.Status = 200, 'HTTP :status = 200 (gRPC always transports as 200)');
+  LStat := FindHeader(LRs, 'grpc-status');
+  Check(LStat = '13',
+        Format('grpc-status trailer = 13 INTERNAL (got "%s")', [LStat]));
+  LMsg := FindHeader(LRs, 'grpc-message');
+  Check(Pos('EArgumentException', LMsg) = 0,
+        Format('grpc-message does NOT carry the exception class name (got "%s")', [LMsg]));
+  Check(LMsg = EXPECTED_MESSAGE,
+        Format('grpc-message = the percent-encoded message %s (got "%s")',
+               [EXPECTED_MESSAGE, LMsg]));
+end;
+
 // ── URL parser (mirrors HorseNghttp2TestClient.ParseTargetURL) ──────────
 
 procedure ParseTargetURL(const AURL: string; out AScheme, AHost: string; out APort: Word);
@@ -639,6 +683,7 @@ begin
       TestServerStream(LClient);   { M6a }
       TestClientStream(LClient);   { M6b }
       TestBidiStream(LClient);     { M6b }
+      TestHandlerError(LClient);   { GRPC-ERRMSG-1 }
     finally
       LClient.Free;
       if GTls <> nil then

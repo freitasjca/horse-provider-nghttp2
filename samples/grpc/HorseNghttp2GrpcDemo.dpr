@@ -58,6 +58,7 @@ uses
   Horse,
   Horse.Provider.Nghttp2,
   Nghttp2.Grpc.Registry,
+  Nghttp2.Grpc.Dispatcher,                   { GRPC-ERRMSG-1: TGrpcDispatcher.OnHandlerError }
   Horse.Provider.Config,                     { THorseCrossSocketConfig with SSL* fields (TLS/mTLS modes) }
   Sample.Greeter.Interfaces,                 { M4c: IGreeter interface + [TGrpcService] }
   Sample.Greeter.Messages,
@@ -69,6 +70,37 @@ const
   CERT_REL_PATH = 'tls' + PathDelim + 'cert.pem';
   KEY_REL_PATH  = 'tls' + PathDelim + 'key.pem';
   CA_REL_PATH   = 'tls' + PathDelim + 'ca.pem';   // mTLS mode only
+
+{ GRPC-ERRMSG-1 test fixture: /greeter.Greeter/Fail always raises. The client
+  must get grpc-status 13 and the MESSAGE only, percent-encoded - never the
+  class name. The '%' and the quotes are there because they are what a raw,
+  unencoded grpc-message got wrong. }
+const
+  FAIL_MESSAGE = '100% invalid "name"';
+
+type
+  TFailingService = class
+  public
+    procedure Fail(const AReq: TObject; const AResp: TObject);
+  end;
+
+procedure TFailingService.Fail(const AReq: TObject; const AResp: TObject);
+begin
+  raise EArgumentException.Create(FAIL_MESSAGE);
+end;
+
+var
+  GFailingService: TFailingService;
+
+{ The class name still matters to whoever runs the server: it goes to the
+  server's own log through the dispatcher hook. The test harnesses grep this
+  line, so its format is part of the gate. Flush, because the harness stops
+  the server by killing it and a buffered line would never reach the file. }
+procedure LogGrpcHandlerError(const APath: string; const AError: Exception);
+begin
+  WriteLn('[grpc-error] ', APath, ' ', AError.ClassName, ': ', AError.Message);
+  Flush(Output);
+end;
 
 procedure GetIndex(Req: THorseRequest; Res: THorseResponse);
 begin
@@ -122,6 +154,13 @@ begin
       TGreetRequest, TGreetResponse, GreeterService.JoinNames);
     TGrpcRegistry.RegisterBidiStream('/greeter.Greeter/ChatGreetings',
       TGreetRequest, TGreetResponse, GreeterService.ChatGreetings);
+
+    { GRPC-ERRMSG-1 — a method that always raises, and the server-side hook
+      that receives what the client is no longer told. }
+    GFailingService := TFailingService.Create;
+    TGrpcRegistry.RegisterMethod('/greeter.Greeter/Fail',
+      TGreetRequest, TGreetResponse, GFailingService.Fail);
+    TGrpcDispatcher.OnHandlerError := LogGrpcHandlerError;
 
     // Regular HTTP route — proves non-gRPC traffic still routes normally.
     THorse.Get('/', GetIndex);
@@ -212,4 +251,8 @@ begin
       ExitCode := 1;
     end;
   end;
+  { Listen has returned, so no dispatch can still reach the handler or hook.
+    A global, so it is nil here if registration never ran; Free accepts nil. }
+  TGrpcDispatcher.OnHandlerError := nil;
+  GFailingService.Free;
 end.
