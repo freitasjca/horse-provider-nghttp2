@@ -17,9 +17,8 @@ All items marked **✓** ship in the v1.0.0 public release. Internal milestone l
 | TLS + ALPN — server + client (OpenSSL 3.x / 1.1.x auto-detect) | **✓** |
 | mTLS (client cert verification) | **✓** (1.10.0: `SSLVerifyPeer` without `SSLCACertFile` now refuses to start — it used to run with no client verification) |
 | TLS 1.2 cipher restriction (`SSLCipherList`) | **✓** (1.10.0 — accepted and ignored before; now applied, and verified on the wire by stage 10b) |
-| TLS 1.3 suites (`SSLCipherSuitesTLS13`) + minimum TLS version (`SSLMinVersion`) | **✓** (1.11.0 — needs a Horse release carrying HashLoad/horse #597; both read back, verified on the wire by stage 10c) |
+| TLS 1.3 suites (`SSLCipherSuitesTLS13`) + minimum TLS version (`SSLMinVersion`) | **✓** (1.11.0 — needs Horse >= 3.3.12, which carries HashLoad/horse #597; both read back, verified on the wire by stage 10c) |
 | HTTP/2 TLS 1.2 cipher check — `Listen` refuses an `SSLCipherList` with no RFC 7540-permitted cipher | **✓** (1.11.0, H2CIPHER-1 — Delphi-nghttp2 >= 1.26.0; skipped when `SSLMinVersion = htvTLS13`; stage 10d) |
-| TLS 1.3 cipher suites | planned — separate OpenSSL call; needs `SSLCipherSuitesTLS13` in Horse's shared config record (`plans/tls13-cipher-suite-split.md` Phase 2) |
 | Cross-product app-type units — Delphi (VCL / Daemon / Windows Service) | **✓** |
 | Cross-product app-type units — FPC (Daemon / LCL / HTTPApplication) | **✓** |
 | FPC trunk 3.3.1 — full parity (HTTP/2 + gRPC + TLS + mTLS) | **✓** |

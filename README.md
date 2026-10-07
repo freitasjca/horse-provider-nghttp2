@@ -50,8 +50,8 @@ HTTP/1.1 endpoint, use one of Horse's other transports.
 ### Requirements
 
 - Delphi 10.4 Sydney or later / FPC 3.2.2 or trunk 3.3.1 — **gRPC needs trunk**; build 3.2.2 with `-dHORSE_NGHTTP2_NO_GRPC` (see [doc/fpc-lazarus.md](doc/fpc-lazarus.md))
-- Horse **≥ 3.3.5** — stock, unpatched. Earlier versions are not enough: on 3.3.4 and below, WebSocket and streaming fail *silently* (see [Horse core requirements](#horse-core-requirements))
-- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) **≥ 1.23.0** — the floor `boss.json` declares. 1.23.0 is an API floor: `SSLMinVersion` is applied through `TTlsServerContext.SetMinProtocolVersion`, which first shipped there (1.22.0 brought the cipher setters). Underneath it is the older *correctness* floor of 1.20.0: below 1.20.0, `PushStreamData` reset the read cursor in the streaming buffer to 0 after every append (CL3b), causing `ReadResponseBodyCallback` to re-read from the start of the buffer on every pump — the buffer grew without bound and the worker deadlocked permanently under slow-client conditions. Any streaming or SSE route is affected; the failure is silent on the server side and surfaces as a hung connection on the client. Boss resolves the newest version satisfying the floor, so there is nothing to bump when the library releases.
+- Horse **≥ 3.3.12** — stock, unpatched. 3.3.12 carries `SSLCipherSuitesTLS13` and `SSLMinVersion` (HashLoad/horse #597), which this provider reads from 1.11.0, so it does not compile against 3.3.11 or earlier. The older floors still explain *why* an older Horse misbehaved: on 3.3.4 and below, WebSocket and streaming fail *silently*; below 3.3.10, `StopListenGraceful` through `THorse` skips the provider's drain (see [Horse core requirements](#horse-core-requirements))
+- [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) **≥ 1.26.0** — the floor `boss.json` declares. 1.26.0 is an API floor: `Listen` refuses an `SSLCipherList` with no RFC 7540-permitted cipher through `RequireHttp2Tls12Cipher` (H2CIPHER-1), which first shipped there; `SSLMinVersion` needs 1.23.0's `SetMinProtocolVersion` and the TLS 1.3 suites 1.22.0's setters. Underneath it is the older *correctness* floor of 1.20.0: below 1.20.0, `PushStreamData` reset the read cursor in the streaming buffer to 0 after every append (CL3b), causing `ReadResponseBodyCallback` to re-read from the start of the buffer on every pump — the buffer grew without bound and the worker deadlocked permanently under slow-client conditions. Any streaming or SSE route is affected; the failure is silent on the server side and surfaces as a hung connection on the client. Boss resolves the newest version satisfying the floor, so there is nothing to bump when the library releases.
 - libnghttp2 ≥ 1.59 — **required at run time**, dynamic-loaded (`nghttp2.dll` / `libnghttp2.so.14` / `libnghttp2.dylib`); see [getting-nghttp2-windows.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-windows.md) / [getting-nghttp2-linux.md](https://github.com/freitasjca/Delphi-nghttp2/blob/main/doc/getting-nghttp2-linux.md)
 - OpenSSL 3.x or 1.1 for TLS only (auto-detected at runtime)
 
@@ -65,7 +65,7 @@ boss install github.com/freitasjca/horse-provider-nghttp2
 
 ### Horse core requirements
 
-**Nothing to do beyond using Horse ≥ 3.3.5.** Everything this provider needs is
+**Nothing to do beyond using Horse ≥ 3.3.12.** Everything this provider needs is
 upstream and released — no fork, no branch, no patched files.
 
 ```
@@ -85,8 +85,11 @@ merged:
 | `Horse.Request.pas` | `SetWebSocketUpgrade`, so RFC 8441 extended CONNECT is recognised as a WebSocket | [PR #550](https://github.com/HashLoad/horse/pull/550) |
 | `Horse.Core.WebSocket.pas` | FPC-only `FeedBytes` interface-to-class cast | [PR #551](https://github.com/HashLoad/horse/pull/551) |
 
-**Why the floor is 3.3.5 and not 3.3.0.** On an older Horse the provider still
-compiles, and the failures are *silent* — which is the reason to state a version
+**Why the floor is 3.3.12.** From 1.11.0 the provider reads the TLS 1.3 suite and
+minimum-version fields that [PR #597](https://github.com/HashLoad/horse/pull/597)
+added in 3.3.12, so an older Horse fails to compile — loudly. The earlier floors
+are kept below because on those releases the provider (before 1.11.0) still
+compiled and the failures were *silent* — which is the reason to state a version
 rather than let people discover it:
 
 - **Before #552**, every streaming and SSE request returns *nothing* — no
@@ -99,6 +102,8 @@ rather than let people discover it:
 - **Before #566** (3.3.5), Windows/FPC enabled keep-alive while `TCP_NODELAY`
   was still `{$IFDEF UNIX}`-only, giving ~200 ms stalls on reused connections.
   Linux was unaffected, so this one hides from a Linux-only CI.
+- **Before #590** (3.3.10), `THorseInstance.StopListenGraceful` called its own
+  `StopListen`, so a graceful stop through `THorse` skipped this provider's drain.
 
 ### Activation
 

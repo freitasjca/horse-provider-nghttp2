@@ -71,7 +71,7 @@ Verified on the wire by `samples/tests/build-fpc.sh` stage 10b and `run-tests.ba
 
 ### TLS 1.3 suites and minimum version (1.11.0)
 
-These two fields come from the shared `THorseCrossSocketConfig` and need a Horse release that carries them (HashLoad/horse #597).
+These two fields come from the shared `THorseCrossSocketConfig` and need Horse >= 3.3.12, the first release that carries them (HashLoad/horse #597).
 
 ```pascal
 Cfg.SSLCipherSuitesTLS13 := 'TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256';
