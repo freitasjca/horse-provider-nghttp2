@@ -410,17 +410,14 @@ short one.
 ## Limitations
 
 Scoped to the *library* version Boss resolves — the provider's floor is
-`Delphi-nghttp2 >= 1.22.0` and Boss takes the newest satisfying it. The full
+`Delphi-nghttp2 >= 1.26.0` and Boss takes the newest satisfying it. The full
 list is in [limitations.md](limitations.md).
 
-- **ZigZag and fixed-width scalars are not selectable** — `sint32`/`sint64`
-  encode as plain varints, `fixed*`/`sfixed*` as varints rather than
-  fixed-width, because the wire type follows the Pascal type and RTTI cannot
-  express the difference. The bytes are wrong rather than merely suboptimal, so
-  `protogen` refuses these types at build time instead of generating code that
-  would silently mis-encode. `int32`/`int64`/`uint32`/`uint64` cover the rest.
-- **Resolved since this section was written:** `map<K,V>` (library 1.13.0) and
-  unsigned `uint32`/`uint64` above 2^31 (1.10.0 — below that they were silently
-  corrupted, FIX-PROTO-UINT32-1).
+- **Resolved since this section was written:** ZigZag and fixed-width scalars
+  (library 1.20.0, WIRE-FORM-1 — `[TProtoMember(N, pwfZigZag)]` /
+  `[TProtoMember(N, pwfFixed)]`, emitted by `protogen`; before it `sint*` and
+  `fixed*`/`sfixed*` encoded as plain varints and `protogen` refused them),
+  `map<K,V>` (library 1.13.0) and unsigned `uint32`/`uint64` above 2^31 (1.10.0 —
+  below that they were silently corrupted, FIX-PROTO-UINT32-1).
 - **Streaming RPCs are covered on h2c only** — all three shapes work; TLS/mTLS share the dispatcher, reader and writer, so a transport-specific difference is unlikely, but untested.
 - **FPC requires libffi** for `RegisterService<T>`. Use `RegisterMethod` + `NGHTTP2_GRPC_NO_FFI` to avoid the dependency.
