@@ -16,6 +16,10 @@ unit Horse.Provider.Nghttp2.Daemon;
                          A TService base class (Vcl.SvcMgr) that auto-wires
                          ServiceStart -> THorse.Listen on a worker thread,
                          ServiceStop  -> THorse.StopListen + drain.
+                         Implements GetServiceController (SVC-CTRL-2), so a
+                         descendant needs no override of its own.
+                         Has its own .dfm (SVC-DFM-1): list this unit in
+                         the app's .dpr as {HorseNghttp2Service: TService}.
 
     {$ELSE}              THorseNghttp2LinuxDaemonApp
                          A static helper. Run() installs POSIX signal
@@ -64,7 +68,15 @@ type
     or ignore this class entirely and write the ServiceStart / ServiceStop
     pair by hand. The class spawns a worker thread for THorse.Listen so
     the SCM ack is not blocked by transport-setup latency (though for
-    nghttp2 that's typically well under 100 ms). }
+    nghttp2 that's typically well under 100 ms).
+
+    SVC-CTRL-2: TService.GetServiceController is abstract and TService.Main
+    calls it on the SCM's thread before OnStart, so a descendant that forgot
+    the override died at every start (EAbstractError, SCM error 1067) with
+    nothing logged. This class implements it, forwarding to the instance
+    created last. One service per process - the same limit THorse has, as it
+    hosts one listener per process. A descendant that still declares its own
+    override keeps working. }
   THorseNghttp2Service = class(TService)
   private
     FPort:           Integer;
@@ -75,6 +87,7 @@ type
   public
     constructor Create(AOwner: TComponent); override;
     destructor  Destroy; override;
+    function GetServiceController: TServiceController; override;
     { Set this BEFORE the service starts (in ServiceCreate, typically) so
       the worker thread binds the intended port. Default 9200 matches
       TNghttp2Config.Default.Port. }
@@ -111,9 +124,32 @@ type
 implementation
 
 uses
+{$IFDEF MSWINDOWS}
+  Winapi.Windows,
+{$ENDIF}
   Horse;
 
 {$IFDEF MSWINDOWS}
+
+// SVC-DFM-1: the base class's own .dfm (Horse.Provider.Nghttp2.Daemon.dfm, no
+// DisplayName). The IDE designs a class(THorseNghttp2Service) descendant as a
+// SERVICE only when this unit is listed in the .dpr as
+// {HorseNghttp2Service: TService} and the descendant's .dfm starts with
+// 'inherited'; otherwise it falls back to the form designer ("Property
+// DisplayName does not exist"). At run time this resource is streamed first.
+{$R *.dfm}
+
+var
+  // SVC-CTRL-2: the service this process hosts. Written on the main thread
+  // (Application.CreateForm, before StartServiceCtrlDispatcher), read on the
+  // SCM's control thread afterwards.
+  GActiveService: THorseNghttp2Service;
+
+procedure HorseNghttp2ServiceController(CtrlCode: DWORD); stdcall;
+begin
+  if GActiveService <> nil then
+    GActiveService.Controller(CtrlCode);
+end;
 
 { THorseNghttp2Service }
 
@@ -123,10 +159,13 @@ begin
   FPort := 9200;
   OnStart := DoServiceStart;
   OnStop  := DoServiceStop;
+  GActiveService := Self;
 end;
 
 destructor THorseNghttp2Service.Destroy;
 begin
+  if GActiveService = Self then
+    GActiveService := nil;
   if Assigned(FListenerThread) then
   begin
     THorse.StopListen;
@@ -134,6 +173,11 @@ begin
     FreeAndNil(FListenerThread);
   end;
   inherited;
+end;
+
+function THorseNghttp2Service.GetServiceController: TServiceController;
+begin
+  Result := HorseNghttp2ServiceController;
 end;
 
 procedure THorseNghttp2Service.DoServiceStart(Sender: TService;

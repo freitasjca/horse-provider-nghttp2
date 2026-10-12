@@ -8,9 +8,11 @@ unit DemoService;
 //    ServiceStart ? spawns worker thread that calls THorse.Listen(Port)
 //    ServiceStop  ? THorse.StopListen + WaitFor(worker)
 //
-//  This unit adds route registration in ServiceCreate (fires before
-//  ServiceStart). No custom lifecycle overrides needed � the base class
-//  handles everything.
+//  The constructor registers the routes and swaps in MyStart/MyStop, which wrap
+//  THorse.Listen/StopListen with a file log (service-diag.log next to the .exe)
+//  so a failed start is diagnosable. GetServiceController comes from the base
+//  (SVC-CTRL-2). The .dfm starts with 'inherited' and the .dpr lists the base
+//  unit as {HorseNghttp2Service: TService} (SVC-DFM-1).
 // ============================================================================
 
 interface
@@ -25,7 +27,9 @@ uses
 
 type
   THorseDemoSvc = class(THorseNghttp2Service)
-    procedure ServiceCreate(Sender: TObject);
+  private
+    procedure MyStart(Sender: TService; var Started: Boolean);
+    procedure MyStop (Sender: TService; var Stopped: Boolean);
   public
     { Override the constructor to register routes ONCE, right after the
       base class wires OnStart/OnStop. Constructor fires from
@@ -38,17 +42,53 @@ type
 var
   HorseDemoSvc: THorseDemoSvc;
 
+
+{ Public diagnostic logger — callable from the .dpr too so we can log events
+  that happen outside the TService instance (Application.Initialize,
+  Application.Run return, unhandled exceptions, etc.). Writes to
+  service-diag.log next to the .exe; thread-safe. }
+procedure WriteDiag(const S: string);
+
 implementation
 
-{%CLASSGROUP 'Vcl.Controls.TControl'}
+uses
+  System.IOUtils, System.SyncObjs;
+
+{%CLASSGROUP 'System.Classes.TPersistent'}
 
 {$R *.dfm}
 
+{ ── Diagnostic file log ─────────────────────────────────────────────────────
+  Single-process critical section serialises writes from SCM / start /
+  stop / pipeline threads. }
+var
+  GDiagLock: TCriticalSection;
+
+procedure WriteDiag(const S: string);
+var
+  LFile: string;
+begin
+  LFile := ExtractFilePath(ParamStr(0)) + 'service-diag.log';
+  GDiagLock.Acquire;
+  try
+    try
+      TFile.AppendAllText(
+        LFile,
+        FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Now) + ' ' + S + sLineBreak);
+    except
+      // Diagnostic must never crash the service
+    end;
+  finally
+    GDiagLock.Release;
+  end;
+end;
+
+
 // Route handlers are unit-scope procedures (matching Horse.Callback shape).
 // They can't reference the service instance's Self, so we capture the port
-// in a unit-scope var set from ServiceCreate.
+// in a unit-scope var set in the constructor.
 var
-  GServicePort: Integer = 9200;   // updated by ServiceCreate; used in GetStatus
+  GServicePort: Integer = 9200;   // updated in the constructor; used in GetStatus
 
 // --- Route handlers ---------------------------------------------------------
 
@@ -68,7 +108,12 @@ end;
 
 constructor THorseDemoSvc.Create(AOwner: TComponent);
 begin
-  inherited;   // base class: sets Port := 9200 + wires OnStart/OnStop
+  // Exactly ONE inherited call: a second one would run the base constructor
+  // again and re-wire OnStart/OnStop back to the base, undoing the swap below.
+  inherited Create(AOwner);   // base: Port := 9200, OnStart/OnStop := base handlers
+  // Replace the base handlers with the instrumented versions below.
+  OnStart := MyStart;
+  OnStop  := MyStop;
   // Application is initialized by now (CreateForm runs after Initialize),
   // so THorse's singleton is ready to accept routes. Registering here
   // sidesteps the .dfm OnCreate binding entirely — no way to accidentally
@@ -78,15 +123,71 @@ begin
   THorse.Get('/status', GetStatus);
 end;
 
-procedure THorseDemoSvc.ServiceCreate(Sender: TObject);
+procedure THorseDemoSvc.MyStart(Sender: TService; var Started: Boolean);
+{$IFDEF DEBUG_WAIT_FOR_IDE}
+var I: Integer;
+{$ENDIF}
 begin
-  // Legacy handler — kept in case the .dfm's OnCreate binding is restored
-  // by the developer. If OnCreate is wired, routes get re-registered here
-  // (Horse.Get is not idempotent — this would double-register), so this
-  // handler is effectively a no-op in the normal path. Left in place so
-  // the .pas keeps compiling regardless of DFM state.
-  Self.Port    := 9200;
-  GServicePort := Self.Port;
+  WriteDiag('MyStart entered');
+
+  {$IFDEF DEBUG_WAIT_FOR_IDE}
+  // Window for "Run → Attach to Process" from the Delphi IDE.
+  // Enable by defining DEBUG_WAIT_FOR_IDE in Project → Options → Building →
+  // Delphi Compiler → Conditional defines.
+  WriteDiag('DEBUG_WAIT_FOR_IDE — sleeping 30 s for IDE attach');
+  for I := 1 to 30 do
+  begin
+    Sleep(1000);
+    ServiceThread.ProcessRequests(False);   // keep SCM happy during the wait
+  end;
+  WriteDiag('Wait window elapsed, proceeding');
+  {$ENDIF}
+
+  try
+    WriteDiag(Format('Calling THorse.Listen(%d) synchronously', [Port]));
+    // IsConsole=False inside a service, so InternalListen returns immediately
+    // after THttpServer.WaitStarted — no anonymous thread needed.
+    THorse.Listen(Port);
+    WriteDiag('THorse.Listen returned');
+    Started := True;
+    WriteDiag('Started := True');
+  except
+    on E: Exception do
+    begin
+      WriteDiag(Format('MyStart EXCEPTION %s: %s',
+        [E.ClassName, E.Message]));
+      // Also surface to Event Viewer so "sc start" / Services.msc shows it
+      LogMessage(Format('Horse start failed: %s: %s',
+        [E.ClassName, E.Message]), EVENTLOG_ERROR_TYPE);
+      Started := False;
+    end;
+  end;
 end;
 
+procedure THorseDemoSvc.MyStop(Sender: TService; var Stopped: Boolean);
+begin
+  WriteDiag('MyStop entered');
+  try
+    THorse.StopListen;
+    WriteDiag('THorse.StopListen returned');
+    Stopped := True;
+  except
+    on E: Exception do
+    begin
+      WriteDiag(Format('MyStop EXCEPTION %s: %s',
+        [E.ClassName, E.Message]));
+      LogMessage(Format('Horse stop failed: %s: %s',
+        [E.ClassName, E.Message]), EVENTLOG_ERROR_TYPE);
+      Stopped := True;  // tell SCM we stopped anyway — process is going away
+    end;
+  end;
+end;
+
+initialization
+  GDiagLock := TCriticalSection.Create;
+
+finalization
+  GDiagLock.Free;
+
 end.
+

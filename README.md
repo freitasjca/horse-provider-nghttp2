@@ -22,7 +22,7 @@ Companion to [`horse-provider-crosssocket`](https://github.com/freitasjca/horse-
 - **Graceful shutdown** — two-stage GOAWAY per RFC 9113 §6.8; in-flight requests complete before the server closes
 - **Event-loop I/O** — epoll (Linux) and IOCP (Windows) engines, opt-in via `UseEventLoop`
 - **Cross-platform** — Windows/Delphi 12, Linux/FPC 3.2.2 and trunk 3.3.1, Linux/Delphi (PAServer)
-- **Cross-product app shapes** — Console, VCL, Daemon, Windows Service, FPC Daemon, LCL, HTTPApplication
+- **Cross-product app shapes** — Console, VCL, Daemon, Windows Service, FPC Daemon, LCL, HTTPApplication (Windows Service: the base `THorseNghttp2Service` implements `GetServiceController` and has its own `.dfm` since 1.12.0; see `samples/service/README.md`)
 
 ## Before you choose it
 

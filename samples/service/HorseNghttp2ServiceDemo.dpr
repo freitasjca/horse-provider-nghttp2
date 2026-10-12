@@ -12,10 +12,10 @@ program HorseNghttp2ServiceDemo;
 //
 //  Install / start / stop / uninstall (admin CMD):
 //    HorseNghttp2ServiceDemo.exe /install
-//    sc start HorseNghttp2Demo
-//    sc query HorseNghttp2Demo         ? STATE = RUNNING
+//    sc start HorseDemoSvc
+//    sc query HorseDemoSvc         ? STATE = RUNNING
 //    curl --http2-prior-knowledge http://127.0.0.1:9200/ping
-//    sc stop HorseNghttp2Demo
+//    sc stop HorseDemoSvc
 //    HorseNghttp2ServiceDemo.exe /uninstall
 //
 //  Full docs: see README.md next to this file.
@@ -26,6 +26,7 @@ program HorseNghttp2ServiceDemo;
 
 uses
   Vcl.SvcMgr,
+  Horse.Provider.Nghttp2.Daemon in '..\..\src\Horse.Provider.Nghttp2.Daemon.pas' {HorseNghttp2Service: TService},
   DemoService in 'DemoService.pas' {HorseDemoSvc: TService},
   Nghttp2.Types in '..\..\..\Delphi-nghttp2\src\Nghttp2.Types.pas',
   Nghttp2.Tls in '..\..\..\Delphi-nghttp2\src\Nghttp2.Tls.pas',

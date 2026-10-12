@@ -29,6 +29,19 @@ Open `HorseNghttp2ServiceDemo.dpr` in Delphi IDE. Delphi should auto-create the 
 
 Then Project → Build → produces `HorseNghttp2ServiceDemo.exe`.
 
+### Keeping the IDE designing the service as a service (SVC-DFM-1, provider 1.12.0+)
+
+- `THorseNghttp2Service` has its own `.dfm`. The `.dpr` lists its unit as
+  `Horse.Provider.Nghttp2.Daemon in '..\..\src\Horse.Provider.Nghttp2.Daemon.pas' {HorseNghttp2Service: TService}`,
+  and `DemoService` as `{HorseDemoSvc: TService}`.
+- In the `.dproj`, both entries need `<Form>` and `<DesignClass>TService</DesignClass>`.
+  The IDE's *Add to Project* drops the `: TService`, so check after adding a unit.
+- `DemoService.dfm` starts with `inherited` and holds only what differs (`DisplayName`).
+- If the IDE says "Property DisplayName does not exist", it is designing the service
+  as a form. Answer **Cancel**: *Ignore* saves a form `.dfm`, and the exe then dies
+  at start with `EReadError ... Margins.Left`.
+- Keep `HorseNghttp2Service` out of *Project Options > Forms > Auto-create*.
+
 ## Install (admin CMD)
 
 ```
@@ -36,12 +49,12 @@ cd C:\path\to\HorseNghttp2ServiceDemo.exe
 HorseNghttp2ServiceDemo.exe /install
 ```
 
-Output: `Service installed successfully.` — the service is registered as `HorseNghttp2Demo` (display name: "Horse Nghttp2 Demo"), StartType = Manual.
+Output: `Service installed successfully.` — the service is registered as `HorseDemoSvc` (the `Name` in `DemoService.dfm`; display name "Horse Nghttp2 Demo"), StartType = Manual.
 
 ## Start
 
 ```
-sc start HorseNghttp2Demo
+sc start HorseDemoSvc
 ```
 
 Output should show `STATE: 4 RUNNING` within a second (worker thread started, SCM ack returned).
@@ -59,7 +72,7 @@ curl --http2-prior-knowledge http://127.0.0.1:9200/status
 ## Verify the service is healthy
 
 ```
-sc query HorseNghttp2Demo
+sc query HorseDemoSvc
 # STATE: 4  RUNNING
 #   (STOPPABLE, NOT_PAUSABLE, ACCEPTS_SHUTDOWN)
 ```
@@ -67,7 +80,7 @@ sc query HorseNghttp2Demo
 ## Stop
 
 ```
-sc stop HorseNghttp2Demo
+sc stop HorseDemoSvc
 ```
 
 Should transition from RUNNING → STOP_PENDING → STOPPED within a second (unless an in-flight request is still draining — SEC-30 waits for it). Output: `STATE: 1 STOPPED`.
@@ -82,12 +95,12 @@ Output: `Service uninstalled successfully.`
 
 ## Validation checklist
 
-- [ ] Install succeeds; `sc query HorseNghttp2Demo` shows STOPPED
+- [ ] Install succeeds; `sc query HorseDemoSvc` shows STOPPED
 - [ ] Start succeeds within <1s; SCM state = RUNNING
 - [ ] `curl .../ping` returns `pong`
 - [ ] `curl .../status` returns JSON with `"shape":"windows-service"` and the correct PID (visible in Task Manager)
 - [ ] Stop succeeds within <1s in the no-load case; longer only if a request is in flight
-- [ ] Uninstall succeeds; `sc query HorseNghttp2Demo` returns `The specified service does not exist`
+- [ ] Uninstall succeeds; `sc query HorseDemoSvc` returns `The specified service does not exist`
 - [ ] Multiple start/stop cycles work without needing a service reinstall
 - [ ] Task Manager confirms no orphaned `HorseNghttp2ServiceDemo.exe` process after stop
 
@@ -101,6 +114,7 @@ Output: `Service uninstalled successfully.`
 
 - **`sc start` fails with error 1053** ("did not respond to the start... in a timely fashion"): probably `nghttp2.dll` isn't findable — the process fails during unit initialization before it can call `SetServiceStatus(SERVICE_START_PENDING)`. Fix: copy `nghttp2.dll` next to the .exe.
 - **Service starts but curl `Connection refused`**: check port 9200 isn't blocked by Windows Firewall. Add rule: `netsh advfirewall firewall add rule name="HorseNghttp2Demo" dir=in action=allow protocol=TCP localport=9200`
+- **`sc start` fails with 1067**: read `service-diag.log` next to the .exe (written by `MyStart`/`MyStop`), then the Application event log (`wevtutil qe Application /q:"*[System[Provider[@Name='Application Error']]]" /c:3 /rd:true /f:text`). Exception `0x0EEDFADE` with a log ending at "Calling Application.Run" means a missing `GetServiceController`; the base class implements it since 1.12.0.
 - **Service starts, curl works, but `sc stop` hangs**: likely an in-flight request never completing. Force-stop via `taskkill /F /IM HorseNghttp2ServiceDemo.exe` and investigate the route handler.
 
 ## Prereq

@@ -1,6 +1,3 @@
-object HorseDemoSvc: THorseDemoSvc
-  DisplayName = 'HorseDemoSvc'
-  Height = 1080
-  Width = 1440
-  PixelsPerInch = 144
+inherited HorseDemoSvc: THorseDemoSvc
+  DisplayName = 'Horse Nghttp2 Demo'
 end
