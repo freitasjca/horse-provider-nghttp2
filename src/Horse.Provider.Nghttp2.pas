@@ -692,8 +692,12 @@ begin
       // cipher restriction. Free it and re-raise.
       try
         // Password MUST be set before LoadPrivateKeyFile — the callback fires
-        // synchronously during that load. Empty string = unencrypted key,
-        // callback returns 0 and OpenSSL proceeds without prompting.
+        // synchronously during that load. Empty string = no password: an
+        // unencrypted key loads, an encrypted one is REFUSED with a message
+        // naming SSLKeyPassword. That holds since Delphi-nghttp2 KEYPW-1, whose
+        // context installs the callback itself; before it, no callback meant
+        // OpenSSL's default one, which prompted on the terminal and hung Listen
+        // on Windows.
         if AConfig.SSLKeyPassword <> '' then
           FTls.SetPrivateKeyPassword(AConfig.SSLKeyPassword);
         FTls.LoadCertificateFile(AConfig.SSLCertFile);

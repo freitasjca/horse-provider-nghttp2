@@ -1,8 +1,8 @@
 # Limitations
 
-Provider **1.12.0**. The gRPC entries below depend on the *library* version Boss
+Provider **1.12.1**. The gRPC entries below depend on the *library* version Boss
 resolves, not on the provider: `boss.json` declares floors of
-`Delphi-nghttp2 >= 1.26.0` and `horse >= 3.3.12` (both since provider 1.11.0), and
+`Delphi-nghttp2 >= 1.27.0` (since provider 1.12.1) and `horse >= 3.3.12` (since 1.11.0), and
 Boss takes the newest satisfying them, so a fresh install gets everything marked
 resolved here. Pinning an older library brings the corresponding limitation
 back — the version that closed each one is named.
@@ -21,7 +21,7 @@ four library releases after they shipped.
 - **gRPC requires FPC trunk 3.3.1** — 3.2.2's `Rtti` unit declares no `TCustomAttribute` and its compiler rejects `{$RTTI EXPLICIT}`, both required by the attribute-driven protobuf codec. Everything else — HTTP/2, TLS, mTLS, the epoll event loop, graceful shutdown, streaming and WebSocket — builds and passes on **3.2.2** with `-dHORSE_NGHTTP2_NO_GRPC`. Delphi is unaffected.
 - **gRPC: a single message is capped at 4 MB** — on *both* the unary and streaming paths as of 2026-08-24. Previously the cap covered streaming only, so this is a **behaviour change for unary calls**: a message above 4 MB is now rejected where it used to be accepted. Raise `GRPC_MAX_MESSAGE_BYTES` in `Nghttp2.Grpc.StreamReader` if a deployment genuinely needs larger single messages. See [grpc.md](grpc.md#decoder-guards).
 - **gRPC: submessage nesting is capped at 100 levels** — `Deserialize` recurses per nested submessage, so a self-referential message type (how protobuf expresses trees) would otherwise let a crafted payload exhaust the stack, which is not catchable. Matches the mainstream protobuf default; real messages do not approach it.
-- **Password-protected private keys** — the `SSLKeyPassword` field wires `SSL_CTX_set_default_passwd_cb` but has never been exercised against an encrypted key: re-checked 2026-10-12, no test or fixture in either repository uses one. Treat as experimental.
+- ~~**Password-protected private keys are untested**~~ — **resolved in library 1.27.0** (KEYPW-1). First tested 2026-10-12 against encrypted keys (PKCS#8 and traditional PEM, right / wrong / empty / missing / non-ASCII password, server and client side; stage 4j, 16/16 on Delphi 12 and FPC 3.3.1), which found and fixed two defects. An encrypted key with **no** `SSLKeyPassword` made OpenSSL prompt on the terminal, so `Listen` hung on Windows; it is now refused at once with a message naming `SSLKeyPassword`. And on Delphi a non-ASCII password was sent in the ANSI code page instead of UTF-8, so the right password was rejected. Pinning a library below 1.27.0 brings both back.
 - **Windows service: one service per process** — `THorseNghttp2Service` (`Horse.Provider.Nghttp2.Daemon`) implements `GetServiceController` for the service the process creates (since provider 1.12.0, SVC-CTRL-2), so an executable hosts one service. That matches Horse itself, which runs one listener per process.
 - ~~**Graceful shutdown is untested on the event-loop engines**~~ — **resolved
   2026-09-10, on all three drivers.** Thread driver: `build-fpc.sh` stage 6 (8/8
