@@ -896,6 +896,12 @@ else
       fail "two-stage GOAWAY — first frame should be open-ended (2147483647), got ${GIDS[0]}"
     elif [[ "${GIDS[1]}" == "2147483647" ]]; then
       fail "two-stage GOAWAY — second frame still open-ended; terminate_session did not name a real stream"
+    elif [[ "${GIDS[1]}" != "13" ]]; then
+      # nghttp sends PRIORITY anchor frames for streams 3..11 before its
+      # first real request, so the request always lands on stream 13.
+      # A cutoff below 13 (most likely 0) means the final GOAWAY fired before
+      # the server processed the request — GOAWAY-RACE-1 regression.
+      fail "two-stage GOAWAY — cutoff ${GIDS[1]} should be 13 (last stream processed); GOAWAY-RACE-1 regression?"
     else
       pass "two-stage GOAWAY — notice 2147483647 then cutoff ${GIDS[1]}"
     fi
