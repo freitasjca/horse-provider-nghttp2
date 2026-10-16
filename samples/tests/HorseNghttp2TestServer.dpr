@@ -120,6 +120,13 @@ begin
        + IntToStr(THorseProviderNghttp2.InlineFallbacks) + '}');
 end;
 
+// ─── Provider probe (PROVIDER-PROBE-1) ────────────────────────────────────
+procedure GetDiagProvider(Req: THorseRequest; Res: THorseResponse);
+begin
+  Res.ContentType('application/json; charset=utf-8')
+     .Send('{"provider":"' + JsonEsc(THorse.ClassParent.ClassName) + '"}');
+end;
+
 // ─── Deliberately slow route (benchmarking) ────────────────────────────────
 //  GET /slow/:ms — sleeps, then replies. Exists so a load generator can
 //  measure what the dispatch pool is actually for.
@@ -1073,6 +1080,7 @@ begin
     THorse.Get   ('/ping',                       GetPing);
     THorse.Get   ('/slow/:ms',                   GetSlow);   // benchmarking — see GetSlow
     THorse.Get   ('/metrics/shed',               GetShedMetrics);  // OBSERV-1 counter
+    THorse.Get   ('/diag/provider',              GetDiagProvider); // PROVIDER-PROBE-1
 
     // ─── Methods ───────────────────────────────────────────────────────────
     THorse.Get   ('/methods/get',                MethodsGet);
