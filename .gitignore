@@ -121,3 +121,9 @@ samples/tests/conn-drops-*.md
 samples/tests/loop-profile-*.md
 samples/tests/tls-sweep-*.md
 samples/tests/slow-latency-*.md
+
+# Captured stdout from the TLS/cipher/version test runs, one file per toolchain
+# (<probe>-dcc.txt from Delphi, <probe>-fpc.txt from FPC): errmsg, h2cipher,
+# suites13. Diagnostic output, never committed.
+*-dcc.txt
+*-fpc.txt
