@@ -1,6 +1,6 @@
 # horse-provider-nghttp2
 
-**Status: v1.10.0 — production-ready (h2c + TLS + mTLS + gRPC + streaming + WebSocket). Delphi 10.4+, FPC 3.2.2 and trunk 3.3.1** — gRPC needs trunk.
+**Status: v1.12.1 — production-ready (h2c + TLS + mTLS + gRPC + streaming + WebSocket + Windows Service). Delphi 10.4+, FPC 3.2.2 and trunk 3.3.1** — gRPC needs trunk.
 
 HTTP/2-native transport provider for [Horse](https://github.com/HashLoad/horse), built on [Delphi-nghttp2](https://github.com/freitasjca/Delphi-nghttp2) and the C library [libnghttp2](https://nghttp2.org/). Drop-in replacement for the default Indy transport — activate with one compiler define, keep your existing routes and middleware unchanged.
 
